@@ -1,0 +1,233 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Root / Design tokens ────────────────────────────────────────────────── */
+:root {
+  --brand: #B71C1C;
+  --brand-dark: #7f1d1d;
+  --brand-mid: #ef4444;
+  --green: #15803d;
+  --yellow: #b45309;
+  --red: #b91c1c;
+  --sidebar-w: 240px;
+
+  /* Light Theme */
+  --bg-base: #f9fafb;
+  --bg-card: #ffffff;
+  --bg-subtle: #f3f4f6;
+  --text-main: #1f2937;
+  --text-muted: #6b7280;
+  --border-color: #e5e7eb;
+}
+
+.dark {
+  --brand: #ef4444;
+  /* Lighter red for dark mode */
+  --brand-dark: #b91c1c;
+  --brand-mid: #f87171;
+  --green: #22c55e;
+  --yellow: #fbbf24;
+  --red: #ef4444;
+
+  /* Dark Theme */
+  --bg-base: #0f172a;
+  --bg-card: #1e293b;
+  --bg-subtle: #334155;
+  --text-main: #f8fafc;
+  --text-muted: #94a3b8;
+  --border-color: #334155;
+}
+
+/* ── Base ────────────────────────────────────────────────────────────────── */
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: 'Inter', system-ui, sans-serif;
+  background: var(--bg-base);
+  color: var(--text-main);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Scrollbar ───────────────────────────────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+  border-radius: 99px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #9ca3af;
+}
+
+/* ── Card variants ───────────────────────────────────────────────────────── */
+@layer components {
+  .card {
+    @apply rounded-2xl shadow-sm transition-colors duration-200;
+    background-color: var(--bg-card);
+    border: 1px solid var(--border-color);
+  }
+
+  .card-hover {
+    @apply card transition-all duration-200 hover:shadow-md hover:-translate-y-0.5;
+  }
+
+  /* ── Buttons ── */
+  .btn {
+    @apply inline-flex items-center gap-2 px-4 py-2 rounded-lg font-semibold text-sm transition-all duration-150 select-none cursor-pointer;
+  }
+
+  .btn-primary {
+    @apply btn bg-[var(--brand)] text-white hover:bg-[var(--brand-dark)] active:scale-95;
+  }
+
+  .btn-ghost {
+    @apply btn bg-transparent hover:bg-black/5 dark:hover:bg-white/10 active:scale-95;
+    color: var(--text-main);
+    border: 1px solid var(--border-color);
+  }
+
+  .btn-success {
+    @apply btn bg-green-600 text-white hover:bg-green-700 active:scale-95;
+  }
+
+  .btn-warning {
+    @apply btn bg-amber-500 text-white hover:bg-amber-600 active:scale-95;
+  }
+
+  /* ── Badges ── */
+  .badge {
+    @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold;
+  }
+
+  .badge-green {
+    @apply badge bg-green-100 text-green-800 border border-green-200 dark:bg-green-900/30 dark:text-green-400 dark:border-green-800;
+  }
+
+  .badge-yellow {
+    @apply badge bg-amber-100 text-amber-800 border border-amber-200 dark:bg-amber-900/30 dark:text-amber-400 dark:border-amber-800;
+  }
+
+  .badge-red {
+    @apply badge bg-red-100 text-red-800 border border-red-200 dark:bg-red-900/30 dark:text-red-400 dark:border-red-800;
+  }
+
+  .badge-gray {
+    @apply badge bg-gray-100 text-gray-600 border border-gray-200 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700;
+  }
+
+  .badge-blue {
+    @apply badge bg-blue-100 text-blue-800 border border-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:border-blue-800;
+  }
+
+  .badge-warning {
+    @apply badge bg-orange-100 text-orange-800 border border-orange-200 dark:bg-orange-900/30 dark:text-orange-400 dark:border-orange-800;
+  }
+
+  /* ── Status colors ── */
+  .status-green {
+    @apply text-green-700;
+  }
+
+  .status-yellow {
+    @apply text-amber-700;
+  }
+
+  .status-red {
+    @apply text-red-700;
+  }
+
+  /* ── Data table ── */
+  .data-table {
+    @apply w-full text-sm border-collapse;
+  }
+
+  .data-table thead tr {
+    background-color: var(--bg-subtle);
+    border-bottom: 1px solid var(--border-color);
+  }
+
+  .data-table th {
+    @apply px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide whitespace-nowrap;
+    color: var(--text-muted);
+  }
+
+  .data-table td {
+    @apply px-3 py-3 text-sm;
+    color: var(--text-main);
+    border-bottom: 1px solid var(--border-color);
+  }
+
+  .data-table tbody tr:hover {
+    background-color: var(--bg-subtle);
+  }
+
+  .data-table tbody tr:last-child td {
+    @apply border-b-0;
+  }
+
+  /* ── Progress bar ── */
+  .progress-track {
+    @apply w-full bg-gray-200 rounded-full overflow-hidden;
+    height: 6px;
+  }
+
+  .progress-fill {
+    height: 100%;
+    border-radius: 999px;
+    transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  /* ── Skeleton loading ── */
+  .skeleton {
+    @apply rounded animate-pulse;
+    background-color: var(--bg-subtle);
+  }
+
+  /* ── Section headers ── */
+  .section-label {
+    @apply text-xs font-bold tracking-widest uppercase mb-3;
+    color: var(--text-muted);
+  }
+
+  /* ── Input / Select ── */
+  .form-control {
+    @apply text-sm rounded-lg px-3 py-2 outline-none transition-all;
+    background-color: var(--bg-card);
+    color: var(--text-main);
+    border: 1px solid var(--border-color);
+  }
+
+  .form-control:focus {
+    border-color: var(--brand);
+    box-shadow: 0 0 0 1px var(--brand);
+  }
+}
+
+/* ── Gauge ring animation ────────────────────────────────────────────────── */
+.gauge-ring {
+  transform-origin: center;
+  transform: rotate(-90deg);
+  transition: stroke-dashoffset 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ── Sidebar mobile overlay ──────────────────────────────────────────────── */
+.sidebar-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 39;
+  backdrop-filter: blur(2px);
+}
