@@ -36,13 +36,12 @@ export default function QuestionHorizontalChart({
 }) {
   // Hanya tampilkan pertanyaan yang memiliki data persentase
   const chartData = useMemo(() => {
-    return data
-      .filter((q) => q.pct !== null)
-      .map((q) => ({
-        name: q.label,
-        pct: q.pct,
-        fullData: q
-      }));
+    return data.map((q) => ({
+      name: q.label,
+      pct: q.pct === null ? 0 : q.pct, // Draw a 0 length bar or default to 0 for display
+      isNull: q.pct === null,
+      fullData: q
+    }));
   }, [data]);
 
   if (chartData.length === 0) {
@@ -71,7 +70,11 @@ export default function QuestionHorizontalChart({
               {description}
             </p>
           )}
-          <p className="text-gray-700 dark:text-gray-300">Kepatuhan: <span className="font-bold text-gray-900 dark:text-white">{p.pct}%</span></p>
+          <p className="text-gray-700 dark:text-gray-300">
+            Kepatuhan: <span className="font-bold text-gray-900 dark:text-white">
+              {p.pct === null ? "Belum ada data" : `${p.pct}%`}
+            </span>
+          </p>
           <div className="flex gap-3 mt-1 text-xs text-gray-500 dark:text-gray-400">
             <span className="text-green-600 font-semibold">✓ {p.countYa}</span>
             <span className="text-red-600 font-semibold">✗ {p.countTidak}</span>
@@ -174,15 +177,21 @@ export default function QuestionHorizontalChart({
                 return (
                   <Cell
                     key={`cell-${index}`}
-                    fill={(entry.pct ?? 0) >= target ? "#199e70" : "#d03b3b"}
+                    fill={entry.isNull ? "#9CA3AF" : ((entry.pct ?? 0) >= target ? "#199e70" : "#d03b3b")}
                   />
                 );
               })}
               <LabelList
                 dataKey="pct"
-                position="right"
-                formatter={(val: number) => `${val}%`}
-                style={{ fontSize: '12px', fontWeight: 'bold', fill: '#4B5563' }}
+                content={(props: any) => {
+                  const { x, y, width, height, value, index } = props;
+                  const item = chartData[index];
+                  return (
+                    <text x={x + width + 10} y={y + height / 2 + 4} fill="#4B5563" fontSize="12" fontWeight="bold">
+                      {item?.isNull ? "-" : `${value}%`}
+                    </text>
+                  );
+                }}
               />
             </Bar>
           </BarChart>
@@ -202,6 +211,10 @@ export default function QuestionHorizontalChart({
         <div className="flex items-center gap-2">
           <div className="w-5 border-t-2 border-dashed border-gray-400"></div>
           <span className="font-medium">Standar minimum {globalTargetPct}%</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="w-3 h-3 rounded-sm" style={{ backgroundColor: "#9CA3AF" }}></div>
+          <span className="font-medium">Belum ada data</span>
         </div>
       </div>
     </div>

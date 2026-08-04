@@ -598,10 +598,11 @@ function PatroliDetailContent() {
     else { h1 = "Eyewasher"; h2 = "Bodywasher"; }
 
     const getExpected = (row: any, lbl: string) => {
+      let exp = 1;
       if (lbl === "Penyimpanan B3" || lbl === "Ketersediaan SDS") {
-        return row.seharusnyaLemari > 0 ? row.seharusnyaLemari : (parseInt(String(row.terlihatLemari), 10) || 0);
+        exp = row.seharusnyaLemari > 0 ? row.seharusnyaLemari : (parseInt(String(row.terlihatLemari), 10) || 0);
       }
-      return 1;
+      return exp > 0 ? exp : 1;
     };
 
     b3ReportData.forEach(row => {
@@ -714,10 +715,7 @@ function PatroliDetailContent() {
                 let expected = 1;
                 if (lblToMatch === "Penyimpanan B3" || lblToMatch === "Ketersediaan SDS") {
                   expected = row.seharusnyaLemari > 0 ? row.seharusnyaLemari : (parseInt(String(row.terlihatLemari), 10) || 0);
-                } else if (lblToMatch === "Eyewasher") {
-                  expected = parseInt(String(row.eyewasher), 10) || 0;
-                } else if (lblToMatch === "Bodywasher") {
-                  expected = parseInt(String(row.bodywasher), 10) || 0;
+                  if (expected <= 0) expected = 1; // Fallback to 1 so the answer is counted
                 }
 
                 if (ans === "Ya") {

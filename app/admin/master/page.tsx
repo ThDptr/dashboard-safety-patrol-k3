@@ -330,6 +330,9 @@ export default function MasterDataAdminPage() {
                   return null;
                 }
                 const displayLabel = (isProfesiModal && col.label === "Ruangan") ? "Nama Unit Profesi" : col.label;
+                const isReadonly = editingIndex !== null && 
+                  ((activeTab === "Master Pertanyaan" && (col.label === "Topik" || col.label === "Pertanyaan")) ||
+                  (activeTab === "Master Topik" && col.label === "Topik"));
 
                 return (
                   <div key={col.label}>
@@ -341,8 +344,9 @@ export default function MasterDataAdminPage() {
                       required
                       value={formData[col.label] || ""}
                       onChange={(e) => setFormData({ ...formData, [col.label]: e.target.value })}
-                      className="form-control w-full text-sm"
+                      className={`form-control w-full text-sm ${isReadonly ? 'bg-gray-100 text-gray-500 cursor-not-allowed border-gray-200 dark:bg-slate-800 dark:text-gray-400 dark:border-slate-700' : ''}`}
                       placeholder={`Masukkan ${displayLabel.toLowerCase()}`}
+                      disabled={isReadonly}
                     />
                   </div>
                 );
