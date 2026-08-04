@@ -109,6 +109,9 @@ export async function POST(request: Request) {
     });
 
     invalidateMasterCache(target);
+    const { revalidateTag } = await import("next/cache");
+    revalidateTag("master-data");
+    revalidateTag(`master-${target}`);
 
     return NextResponse.json(result);
   } catch (error: any) {
@@ -145,6 +148,9 @@ export async function PUT(request: Request) {
     });
 
     invalidateMasterCache(target);
+    const { revalidateTag } = await import("next/cache");
+    revalidateTag("master-data");
+    revalidateTag(`master-${target}`);
 
     return NextResponse.json(result);
   } catch (error: any) {
@@ -189,6 +195,9 @@ export async function DELETE(request: Request) {
     });
 
     invalidateMasterCache(target);
+    const { revalidateTag } = await import("next/cache");
+    revalidateTag("master-data");
+    revalidateTag(`master-${target}`);
 
     return NextResponse.json(result);
   } catch (error: any) {

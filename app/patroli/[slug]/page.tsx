@@ -822,38 +822,14 @@ function PatroliDetailContent() {
       if (ruangan) url += `&ruangan=${encodeURIComponent(ruangan)}`;
       if (startDate && endDate) url += `&startDate=${startDate}&endDate=${endDate}`;
 
-      // Determine which master data to fetch based on module scope
-      let masterSheetName = "";
-      const moduleSlug = slug as string;
-      const matchedModule = MODULE_BY_SLUG[moduleSlug];
-      if (matchedModule) {
-        if (matchedModule.group.includes("Dalam Gedung") || matchedModule.slug === "b3") {
-          masterSheetName = "Master Ruangan";
-        } else if (matchedModule.slug === "luar-gedung" || matchedModule.group.includes("Luar")) {
-          masterSheetName = "Master Luar";
-        }
-      }
-
-      const fetchUrls = [fetch(url, { cache: 'no-store' }).then(r => {
-        if (!r.ok) throw new Error("Gagal mengambil data");
-        return r.json();
-      })];
-
-      if (masterSheetName) {
-        fetchUrls.push(
-          fetch(`/api/master?sheetName=${masterSheetName}`, { cache: 'no-store' })
-            .then(r => r.ok ? r.json() : { data: [] })
-            .catch(() => ({ data: [] }))
-        );
-      }
-
-      const results = await Promise.all(fetchUrls);
-      const json = results[0];
-      const masterJson = results[1];
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) throw new Error("Gagal mengambil data");
+      
+      const json = await res.json();
 
       setData(json);
-      if (masterJson && masterJson.data) {
-        setMasterData(masterJson.data);
+      if (json.masterData) {
+        setMasterData(json.masterData);
       }
     } catch (e: any) {
       setError(e.message || "Error");

@@ -3,7 +3,7 @@
 // Dashboard Patroli Kesling & K3 RSOMH
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type Jawaban = "Ya" | "Tidak" | "N/A" | "";
+export type Jawaban = "Ya" | "Tidak" | "N/A" | "Setengah" | "";
 
 /** Raw row from the Web App — keys are exact column headers */
 export type RawRow = Record<string, string>;
@@ -107,7 +107,7 @@ export async function fetchMasterData(target: string): Promise<any[]> {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
-    cache: "no-store"
+    next: { revalidate: 300, tags: ['master-data', `master-${target}`] }
   });
 
   if (!res.ok) {
@@ -145,16 +145,22 @@ function normalizeRows(json: WebAppResponse): PatroliRow[] {
 // ─── Field accessors ──────────────────────────────────────────────────────────
 
 /**
- * Get the answer for a specific question column in a row.
- * Returns "Ya", "Tidak", "N/A", or "" (empty).
+ * Get the standardized answer from a row based on sheet header.
  * Safely coerces value to string first (Web App may return numbers or null).
  */
 export function getAnswer(row: PatroliRow, sheetHeader: string): Jawaban {
   const raw = row.raw[sheetHeader];
   const val = raw == null ? "" : String(raw).trim();
+  
   if (val === "Ya") return "Ya";
   if (val === "Tidak") return "Tidak";
   if (val === "N/A") return "N/A";
+  
+  // Specific to Sarana Proteksi Kebakaran
+  if (val === "Ya, kondisi baik/utuh") return "Ya";
+  if (val === "Ya, tapi kondisi tidak baik/tidak utuh") return "Setengah";
+  if (val === "Tidak ada") return "Tidak";
+  
   return "";
 }
 

@@ -66,6 +66,7 @@ function applyDataRow(row: ExcelJS.Row, idx: number): void {
 function jawabanDisplay(val: string): string {
   if (val === "Ya") return "✓ Ya";
   if (val === "Tidak") return "✗ Tidak";
+  if (val === "Setengah") return "⚠️ Kurang Baik";
   if (val === "N/A") return "N/A";
   return "-";
 }
@@ -405,8 +406,9 @@ export async function GET(request: Request) {
       let rowNum = tableStartRow;
       let dataIdx = 0;
 
+      const masterProfesiNames = masterData.filter((m: any) => m.Ruangan?.startsWith('**')).map((m: any) => m.Ruangan?.substring(2).trim().toLowerCase());
+
       for (const sub of aggregate.submissions) {
-        const masterProfesiNames = masterData.filter((m: any) => m.Ruangan?.startsWith('**')).map((m: any) => m.Ruangan?.substring(2).trim().toLowerCase());
         const finalDesc = buildKeteranganForExport(sub, isAPD, isB3, masterProfesiNames);
 
         dataIdx++;
@@ -698,11 +700,19 @@ export async function GET(request: Request) {
            qColIdx++;
         }
 
+        summaryRow.height = 35; // Taller to fit multi-line content
         for (const q of mod.questions) {
           const qr = aggregate.questionResults.find((res) => res.question.sheetHeader === q.sheetHeader);
-          summaryRow.getCell(qColIdx).value = qr?.pct !== null ? `${qr?.pct}%` : "-";
+          if (qr && qr.pct !== null) {
+            const total = qr.countYa + qr.countTidak;
+            const yaPct = total > 0 ? Math.round((qr.countYa / total) * 100) : 0;
+            const tidakPct = total > 0 ? Math.round((qr.countTidak / total) * 100) : 0;
+            summaryRow.getCell(qColIdx).value = `Ya: ${qr.countYa} (${yaPct}%)\nTidak: ${qr.countTidak} (${tidakPct}%)`;
+          } else {
+            summaryRow.getCell(qColIdx).value = "-";
+          }
           summaryRow.getCell(qColIdx).font = { bold: true };
-          summaryRow.getCell(qColIdx).alignment = { horizontal: "center", vertical: "middle" };
+          summaryRow.getCell(qColIdx).alignment = { horizontal: "center", vertical: "middle", wrapText: true };
           summaryRow.getCell(qColIdx).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFF3E0" } };
           qColIdx++;
         }

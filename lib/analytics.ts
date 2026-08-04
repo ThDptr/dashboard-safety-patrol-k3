@@ -129,7 +129,7 @@ export function getNeedsAttention(
     for (const row of relevant) {
       for (const q of mod.questions) {
         const ans = getAnswer(row, q.sheetHeader);
-        if (ans === "Tidak") {
+        if (ans === "Tidak" || ans === "Setengah") {
           let qLabel = q.label;
           if (!qLabel) {
             const match = q.sheetHeader.match(/\[(.*?)\]/);
@@ -178,6 +178,9 @@ export function computeModuleAggregate(
   masterTopik: any[] = [],
   masterPertanyaan: any[] = []
 ): ModuleAggregateResult {
+  // Precompute constants used inside loops
+  const masterProfesi = masterData.filter(m => m.Ruangan?.startsWith('**')).map(m => m.Ruangan?.substring(2).trim().toLowerCase());
+
   // Filter rows relevant to this module
   const relevantRows = rows.filter((r) => rowMatchesModule(r, module));
 
@@ -278,7 +281,6 @@ export function computeModuleAggregate(
         } else if (ans === "Tidak") {
           let nonCompliantCount = 0;
           let profViolations = 0;
-          const masterProfesi = masterData.filter(m => m.Ruangan?.startsWith('**')).map(m => m.Ruangan?.substring(2).trim().toLowerCase());
           
           for (const key of Object.keys(row.raw)) {
             if (key.includes("APD - Unit/Profesi yang tidak patuh")) {
@@ -341,6 +343,10 @@ export function computeModuleAggregate(
         }
       } else {
         if (ans === "Ya") ya++;
+        else if (ans === "Setengah") {
+          ya += 0.5;
+          tidak += 0.5;
+        }
         else if (ans === "Tidak") tidak++;
         else if (ans === "N/A") na++;
         else empty++;

@@ -106,6 +106,7 @@ export default function SubmissionTable({
   const JawabanBadge = ({ jawaban }: { jawaban: string }) => {
     if (jawaban === "Ya") return <span className="badge-green text-xs px-2 py-1">Ya</span>;
     if (jawaban === "Tidak") return <span className="badge-red text-xs px-2 py-1">Tidak</span>;
+    if (jawaban === "Setengah") return <span className="bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 font-medium text-xs px-2 py-1 rounded-md whitespace-nowrap">Kurang Baik</span>;
     if (jawaban === "N/A") return <span className="badge-gray text-xs px-2 py-1">N/A</span>;
     return <span className="text-gray-400 font-bold">-</span>;
   };
@@ -626,9 +627,28 @@ export default function SubmissionTable({
                 })()}
                 {moduleDef.questions?.map((q: any) => {
                   const qr = questionResults.find((res: any) => res.sheetHeader === q.sheetHeader);
+                  if (!qr) return <td key={q.sheetHeader} className="text-center">-</td>;
+                  
+                  const total = qr.countYa + qr.countTidak;
+                  const yaPct = total > 0 ? Math.round((qr.countYa / total) * 100) : 0;
+                  const tidakPct = total > 0 ? Math.round((qr.countTidak / total) * 100) : 0;
+
                   return (
-                    <td key={q.sheetHeader} className="text-center font-bold text-gray-800 dark:text-gray-100">
-                      {qr?.pct !== null && qr?.pct !== undefined ? `${qr.pct}%` : "-"}
+                    <td key={q.sheetHeader} className="text-center py-2 align-top">
+                      {total > 0 ? (
+                        <div className="flex flex-col gap-2">
+                          <div className="flex flex-col items-center justify-center bg-green-50/50 dark:bg-green-900/10 p-1.5 rounded border border-green-100 dark:border-green-800/50">
+                            <span className="font-bold text-green-700 dark:text-green-400">{qr.countYa}</span>
+                            <span className="text-[10px] font-bold bg-green-200 dark:bg-green-800 text-green-900 dark:text-green-100 px-1.5 py-0.5 rounded-md leading-none mt-1">{yaPct}%</span>
+                          </div>
+                          <div className="flex flex-col items-center justify-center bg-red-50/50 dark:bg-red-900/10 p-1.5 rounded border border-red-100 dark:border-red-800/50">
+                            <span className="font-bold text-red-700 dark:text-red-400">{qr.countTidak}</span>
+                            <span className="text-[10px] font-bold bg-red-200 dark:bg-red-800 text-red-900 dark:text-red-100 px-1.5 py-0.5 rounded-md leading-none mt-1">{tidakPct}%</span>
+                          </div>
+                        </div>
+                      ) : (
+                        <span className="font-bold text-gray-400">-</span>
+                      )}
                     </td>
                   );
                 })}

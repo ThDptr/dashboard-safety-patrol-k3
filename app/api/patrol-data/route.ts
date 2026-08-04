@@ -178,6 +178,7 @@ export async function GET(request: Request) {
         })),
         submissions,
         submissionCount: submissions.length,
+        masterData,
       });
     }
 
