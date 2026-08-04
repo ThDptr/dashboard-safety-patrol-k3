@@ -13,6 +13,7 @@
 import type { ModuleDef, QuestionDef } from "./modules";
 import {
   type PatroliRow,
+  type Jawaban,
   getAnswer,
   getField,
   getDisplayLocation,
@@ -45,7 +46,7 @@ export interface SubmissionResult {
   /** Per-question answers for this submission */
   answers: Array<{
     question: QuestionDef;
-    jawaban: "Ya" | "Tidak" | "N/A" | "";
+    jawaban: Jawaban;
   }>;
   /** Combined findings description */
   description: string;
