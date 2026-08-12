@@ -1,19 +1,23 @@
 "use client";
 import Link from "next/link";
 import ThemeToggle from "@/components/ThemeToggle";
+import { verifySettingsPassword } from "./actions";
 
 const FORM_URL = "https://docs.google.com/forms/d/1aGG59GOZLQ7IGG6Jc1BakbETd8TgXkc-RaSqPI67Igc/edit#responses";
 const SHEET_URL = "https://docs.google.com/spreadsheets/d/1cX0s-kW_fiGwmN5QQNSww3o2tiG3UK1_CeADJXIC5Ys/edit?usp=sharing";
 const MANUAL_BOOK_URL = "https://docs.google.com/document/d/1tjTk21XYwqzbgRvE39rN0T7WQ1Y-OkdyeD7_k2rcL3g/edit?usp=sharing";
 
 export default function SettingsPage() {
-  const handleEditFormClick = (e: React.MouseEvent) => {
+  const handleEditFormClick = async (e: React.MouseEvent) => {
     e.preventDefault();
     const pwd = prompt("Masukkan password untuk mengedit form:");
-    if (pwd === "k3rs") {
-      window.open(FORM_URL, "_blank");
-    } else if (pwd !== null) {
-      alert("Password salah!");
+    if (pwd !== null) {
+      const isValid = await verifySettingsPassword(pwd);
+      if (isValid) {
+        window.open(FORM_URL, "_blank");
+      } else {
+        alert("Password salah!");
+      }
     }
   };
 

@@ -18,7 +18,16 @@ Dokumen ini berfungsi sebagai **Manual Book** terpadu untuk Pengguna (User), Adm
 - 📥 **Export Laporan (Excel & PDF)**: Mengunduh data hasil patroli secara rapi dan terstruktur dalam format `.xlsx` dan `.pdf`.
 - 🏢 **Manajemen Master Data & PCRA**: Admin dapat mengelola daftar ruangan, unit profesi, dan memonitor proyek konstruksi (PCRA).
 - 🔒 **Kunci Bulan (Lock Month)**: Fitur bagi Admin untuk mengunci data patroli pada bulan tertentu agar tidak bisa diubah lagi.
-- ⚡ **Kinerja Tinggi & Real-time**: Menggunakan sistem *caching* yang optimal dan sinkronisasi langsung dengan Google Sheets.
+- ⚡ **Kinerja Tinggi & Caching Cerdas**: Dilengkapi dengan *AbortController* untuk mencegah *race condition* saat perpindahan tab secara cepat, dan mekanisme *request deduplication* untuk mencegah *rate-limit* Google Apps Script.
+
+---
+
+## 🔗 Akses & Link Penting
+
+- **Formulir Isi Patroli K3RS:** [Isi Form Disini](https://forms.gle/C9YZAJLHjAZMdnHY8)
+- **Edit Google Form:** [Mode Editor Form](https://docs.google.com/forms/d/1aGG59GOZLQ7IGG6Jc1BakbETd8TgXkc-RaSqPI67Igc/edit#responses)
+- **Spreadsheet Data Mentah:** [Google Sheets Data](https://docs.google.com/spreadsheets/d/1cX0s-kW_fiGwmN5QQNSww3o2tiG3UK1_CeADJXIC5Ys/edit?usp=sharing)
+- **Menu Pengaturan / Master Data:** Anda bisa mengatur tautan di atas melalui halaman **Pengaturan** di dashboard.
 
 ---
 
