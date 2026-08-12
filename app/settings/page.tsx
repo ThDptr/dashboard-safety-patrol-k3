@@ -12,10 +12,15 @@ export default function SettingsPage() {
     e.preventDefault();
     const pwd = prompt("Masukkan password untuk mengedit form:");
     if (pwd !== null) {
+      // Buka tab kosong SECARA SINKRON agar tidak diblokir oleh popup blocker browser
+      const newTab = window.open('about:blank', '_blank');
+      
       const isValid = await verifySettingsPassword(pwd);
-      if (isValid) {
-        window.open(FORM_URL, "_blank");
+      
+      if (isValid && newTab) {
+        newTab.location.href = FORM_URL;
       } else {
+        if (newTab) newTab.close();
         alert("Password salah!");
       }
     }
