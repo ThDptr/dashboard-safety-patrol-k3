@@ -45,6 +45,8 @@ interface QuestionResult {
   countEmpty: number;
   countTidakAda?: number;
   countSetengah?: number;
+  targetPct?: number;
+  description?: string;
 }
 
 interface AnswerItem {
