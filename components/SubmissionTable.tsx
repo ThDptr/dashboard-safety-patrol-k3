@@ -19,7 +19,8 @@ export default function SubmissionTable({
   const isB3 = moduleDef.slug === "b3";
   const isAPAR = moduleDef.slug === "apar";
   const isSosialisasi = moduleDef.logOnly === true;
-  
+  const isHydrant = moduleDef.slug === "hydrant";
+
   // Array of distinct pastel colors for question columns
   const Q_COLORS = [
     "bg-blue-50/60 dark:bg-blue-900/20 text-blue-900 dark:text-blue-200 border-l border-r border-blue-100/60 dark:border-blue-800/40",
@@ -43,35 +44,46 @@ export default function SubmissionTable({
     return ext ? formatMaybeDate(ext.value) : "-";
   };
 
-  const getExtrasBefore = () => {
+  const extrasBefore = React.useMemo(() => {
     if (moduleDef.slug === "apar") return ["Jumlah APAR Powder", "Jumlah APAR CO2"];
     if (isLuarGedung) return ["Jumlah APAR Powder 6 kg", "Jumlah APAR Powder 25 kg", "Jumlah APAR CO2"];
-    if (isB3) return ["Jumlah Lemari B3"]; // Label from B3 logic
+    if (isB3) return ["Jumlah Lemari B3"];
     return [];
-  };
+  }, [moduleDef.slug, isLuarGedung, isB3]);
 
-  const getExtrasAfter = () => {
+  const extrasAfter = React.useMemo(() => {
     if (moduleDef.slug === "apar" || isLuarGedung) return ["Tgl. Pemeliharaan Terakhir"];
     if (isB3) return ["Jumlah Eyewasher", "Jumlah Bodywasher"];
     return [];
-  };
-
-  const extrasBefore = getExtrasBefore();
-  const extrasAfter = getExtrasAfter();
+  }, [moduleDef.slug, isLuarGedung, isB3]);
 
   // For APAR and B3, we want to split the extra numeric fields into Seharusnya (from master) and Terlihat (from form)
   const isMasterComparison = moduleDef.slug === "apar" || isLuarGedung || isB3;
 
-  // Helper to find master row
-  const getMasterRow = (location: string) => {
-    if (!masterData || !location) return null;
-    const locLower = location.trim().toLowerCase();
-    return masterData.find((m: any) => 
-      (m.Ruangan && m.Ruangan.trim().toLowerCase() === locLower) || 
-      (m.Lokasi && m.Lokasi.trim().toLowerCase() === locLower) ||
-      (m['Area Luar'] && m['Area Luar'].trim().toLowerCase() === locLower)
-    );
-  };
+  // Helper to find master row (Optimized with O(1) Map lookup)
+  const masterDataMap = React.useMemo(() => {
+    const map = new Map<string, any>();
+    if (!masterData || !Array.isArray(masterData)) return map;
+    masterData.forEach((m: any) => {
+      if (m.Ruangan) map.set(String(m.Ruangan).trim().toLowerCase(), m);
+      if (m.Lokasi) map.set(String(m.Lokasi).trim().toLowerCase(), m);
+      if (m['Area Luar']) map.set(String(m['Area Luar']).trim().toLowerCase(), m);
+    });
+    return map;
+  }, [masterData]);
+
+  // Precompute professions for APD to prevent O(N^2) lookup
+  const masterProfesiNames = React.useMemo(() => {
+    if (!masterData || !Array.isArray(masterData)) return [];
+    return masterData
+      .filter((m: any) => m.Ruangan?.startsWith('**'))
+      .map((m: any) => m.Ruangan?.substring(2).trim().toLowerCase());
+  }, [masterData]);
+
+  const getMasterRow = React.useCallback((location: string) => {
+    if (!location) return null;
+    return masterDataMap.get(String(location).trim().toLowerCase()) || null;
+  }, [masterDataMap]);
 
   // State for calculating totals
   const totals = React.useMemo(() => {
@@ -86,8 +98,13 @@ export default function SubmissionTable({
       const mRow = getMasterRow(sub.location);
       extrasBefore.forEach(label => {
         const terlihatVal = parseInt(getExtraValue(sub, label) as string, 10) || 0;
-        const seharusnyaVal = mRow && mRow[label] ? parseInt(mRow[label], 10) || 0 : 0;
+        let seharusnyaVal = mRow && mRow[label] !== undefined && mRow[label] !== "" ? parseInt(mRow[label], 10) || 0 : 0;
         
+        // Fallback to form data (Terlihat) if Master data for Seharusnya is 0 or missing
+        if (seharusnyaVal === 0) {
+           seharusnyaVal = terlihatVal;
+        }
+
         calc[label].terlihat += terlihatVal;
         calc[label].seharusnya += seharusnyaVal;
       });
@@ -105,8 +122,9 @@ export default function SubmissionTable({
 
   const JawabanBadge = ({ jawaban }: { jawaban: string }) => {
     if (jawaban === "Ya") return <span className="badge-green text-xs px-2 py-1">Ya</span>;
-    if (jawaban === "Tidak") return <span className="badge-red text-xs px-2 py-1">Tidak</span>;
+    if (jawaban === "Tidak") return <span className="badge-red text-xs px-2 py-1">{moduleDef.slug === "sarana-proteksi" ? "Tidak Ada" : "Tidak"}</span>;
     if (jawaban === "Setengah") return <span className="bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 font-medium text-xs px-2 py-1 rounded-md whitespace-nowrap">Kurang Baik</span>;
+    if (jawaban === "TidakAda") return <span className="bg-orange-100 text-orange-800 dark:bg-orange-900/40 dark:text-orange-300 font-medium text-xs px-2 py-1 rounded-md whitespace-nowrap">{isHydrant ? "Tidak ada hydrant" : "Tidak Ada"}</span>;
     if (jawaban === "N/A") return <span className="badge-gray text-xs px-2 py-1">N/A</span>;
     return <span className="text-gray-400 font-bold">-</span>;
   };
@@ -203,7 +221,14 @@ export default function SubmissionTable({
                   ))}
                 </>
               )}
-              <th>Keterangan</th>
+              {isB3 ? (
+                <>
+                  <th>Keterangan B3 &amp; Spill Kit</th>
+                  <th>Keterangan Eyewasher &amp; Bodywasher</th>
+                </>
+              ) : (
+                <th>Keterangan</th>
+              )}
             </tr>
           </thead>
           <tbody>
@@ -246,11 +271,18 @@ export default function SubmissionTable({
                         const valTerlihat = getExtraValue(sub, l);
                         if (isMasterComparison) {
                           const mRow = getMasterRow(sub.location);
-                          const valSeharusnyaStr = mRow && mRow[l] !== undefined ? mRow[l] : "-";
+                          let valSeharusnyaStr = mRow && mRow[l] !== undefined && mRow[l] !== "" ? String(mRow[l]) : "-";
                           
                           const numTerlihat = parseInt(valTerlihat as string, 10) || 0;
-                          const numSeharusnya = parseInt(valSeharusnyaStr as string, 10) || 0;
-                          const isKurang = valSeharusnyaStr !== "-" && numTerlihat < numSeharusnya;
+                          let numSeharusnya = parseInt(valSeharusnyaStr, 10) || 0;
+
+                          // Fallback to form data (Terlihat) if Master data for Seharusnya is 0 or missing
+                          if (numSeharusnya === 0 || valSeharusnyaStr === "-") {
+                            valSeharusnyaStr = numTerlihat.toString();
+                            numSeharusnya = numTerlihat;
+                          }
+
+                          const isKurang = numTerlihat < numSeharusnya;
 
                           return (
                             <React.Fragment key={l}>
@@ -288,7 +320,10 @@ export default function SubmissionTable({
                             const numCo2 = parseInt(mRow["Jumlah APAR CO2"], 10) || 0;
                             totalApar = numPowder6 + numPowder25 + numCo2;
                           }
-                        } else {
+                        }
+                        
+                        // Fallback to Terlihat (form data) if Master Data is missing or returned 0
+                        if (totalApar === 0) {
                           if (isAPAR) {
                             const numPowder = parseInt(getExtraValue(sub, "Jumlah APAR Powder") as string, 10) || 0;
                             const numCo2 = parseInt(getExtraValue(sub, "Jumlah APAR CO2") as string, 10) || 0;
@@ -335,7 +370,10 @@ export default function SubmissionTable({
                               const numCo2 = parseInt(mRow["Jumlah APAR CO2"], 10) || 0;
                               totalApar = numPowder6 + numPowder25 + numCo2;
                             }
-                          } else {
+                          }
+                          
+                          // Fallback to Terlihat (form data) if Master Data is missing or returned 0
+                          if (totalApar === 0) {
                             if (isAPAR) {
                               const numPowder = parseInt(getExtraValue(sub, "Jumlah APAR Powder") as string, 10) || 0;
                               const numCo2 = parseInt(getExtraValue(sub, "Jumlah APAR CO2") as string, 10) || 0;
@@ -401,10 +439,9 @@ export default function SubmissionTable({
                           if (ans === "Ya") {
                             return <td key={q.sheetHeader} className={`text-center font-bold text-emerald-600 dark:text-emerald-400 ${colColor}`}>{totalKaryawan}</td>;
                           } else if (ans === "Tidak") {
-                            const masterProfesiNames = masterData.filter((m: any) => m.Ruangan?.startsWith('**')).map((m: any) => m.Ruangan?.substring(2).trim().toLowerCase());
-                            const nonCompliant = sub.tags ? sub.tags.filter((t: any) => !masterProfesiNames.includes(t.toLowerCase())).length : 0;
+                            let nonCompliant = sub.tags ? sub.tags.filter((t: any) => !masterProfesiNames.includes(t.toLowerCase())).length : 0;
+                            if (nonCompliant === 0 && (!sub.tags || sub.tags.length === 0)) nonCompliant = 1; // fallback if tags are empty but they said Tidak
                             let compliant = Math.max(0, totalKaryawan - nonCompliant);
-                            if (nonCompliant === 0 && sub.tags && sub.tags.length === 0) compliant = 0; // fallback if tags are empty but they said Tidak
                             
                             return (
                               <td key={q.sheetHeader} className={`text-center font-bold ${colColor} ${compliant < totalKaryawan ? '!bg-red-50/80 dark:!bg-red-900/20 !text-red-600 dark:!text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
@@ -435,7 +472,10 @@ export default function SubmissionTable({
                             const numCo2 = parseInt(mRow["Jumlah APAR CO2"], 10) || 0;
                             totalApar = numPowder6 + numPowder25 + numCo2;
                           }
-                        } else {
+                        }
+                        
+                        // Fallback to Terlihat (form data) if Master Data is missing or returned 0
+                        if (totalApar === 0) {
                           if (isAPAR) {
                             const numPowder = parseInt(getExtraValue(sub, "Jumlah APAR Powder") as string, 10) || 0;
                             const numCo2 = parseInt(getExtraValue(sub, "Jumlah APAR CO2") as string, 10) || 0;
@@ -508,9 +548,9 @@ export default function SubmissionTable({
                           if (ans === "Ya") {
                             sumCompliant += totalKaryawan;
                           } else if (ans === "Tidak") {
-                            const nonCompliant = sub.tags ? sub.tags.length : 0;
+                            let nonCompliant = sub.tags ? sub.tags.length : 0;
+                            if (nonCompliant === 0) nonCompliant = 1;
                             let compliant = Math.max(0, totalKaryawan - nonCompliant);
-                            if (nonCompliant === 0) compliant = 0;
                             sumCompliant += compliant;
                           }
                         });
@@ -532,21 +572,63 @@ export default function SubmissionTable({
                     </>
                   )}
 
-                  <td className="text-gray-600 dark:text-gray-300 min-w-[200px]" data-photo-url={sub.photoUrl || ""}>
-                    {tagPrefix && <span className="font-semibold text-amber-600 dark:text-amber-500">{tagPrefix}</span>}
-                    {sub.description && <span>{sub.description} </span>}
-                    {sub.photoUrl && (
-                      <a
-                        href={sub.photoUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center gap-1 font-medium ml-1 whitespace-nowrap"
-                      >
-                        📷 Lihat Foto
-                      </a>
-                    )}
-                    {!tagPrefix && !sub.description && !sub.photoUrl && "-"}
-                  </td>
+                  {isB3 ? (
+                    <>
+                      {/* Kolom a+b: B3 + Spill Kit */}
+                      <td className="text-gray-600 dark:text-gray-300 min-w-[200px]" data-photo-url={sub.photoUrl || ""}>
+                        {tagPrefix && <span className="font-semibold text-amber-600 dark:text-amber-500">{tagPrefix}</span>}
+                        {sub.description && <span>{sub.description} </span>}
+                        {sub.photoUrl && (
+                          <a
+                            href={sub.photoUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center gap-1 font-medium ml-1 whitespace-nowrap"
+                          >
+                            📷 Lihat Foto
+                          </a>
+                        )}
+                        {!tagPrefix && !sub.description && !sub.photoUrl && "-"}
+                      </td>
+                      {/* Kolom c: Eyewasher & Bodywasher */}
+                      {(() => {
+                        const ewDesc = sub.secondaryDescription || "";
+                        const ewPhoto = sub.secondaryPhotoUrl || "";
+                        return (
+                          <td className="text-gray-600 dark:text-gray-300 min-w-[200px]" data-photo-url={ewPhoto || ""}>
+                            {ewDesc && <span>{ewDesc} </span>}
+                            {ewPhoto && (
+                              <a
+                                href={ewPhoto}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center gap-1 font-medium ml-1 whitespace-nowrap"
+                              >
+                                📷 Lihat Foto
+                              </a>
+                            )}
+                            {!ewDesc && !ewPhoto && "-"}
+                          </td>
+                        );
+                      })()}
+                    </>
+                  ) : (
+                    <td className="text-gray-600 dark:text-gray-300 min-w-[200px]" data-photo-url={sub.photoUrl || ""}>
+                      {tagPrefix && <span className="font-semibold text-amber-600 dark:text-amber-500">{tagPrefix}</span>}
+                      {sub.description && <span>{sub.description} </span>}
+                      {sub.photoUrl && (
+                        <a
+                          href={sub.photoUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center gap-1 font-medium ml-1 whitespace-nowrap"
+                        >
+                          📷 Lihat Foto
+                        </a>
+                      )}
+                      {!tagPrefix && !sub.description && !sub.photoUrl && "-"}
+                    </td>
+                  )}
                 </tr>
               );
             })}
@@ -629,22 +711,86 @@ export default function SubmissionTable({
                   const qr = questionResults.find((res: any) => res.sheetHeader === q.sheetHeader);
                   if (!qr) return <td key={q.sheetHeader} className="text-center">-</td>;
                   
-                  const total = qr.countYa + qr.countTidak;
+                  const isSaranaProteksi = moduleDef.slug === "sarana-proteksi";
+                  const total = qr.countYa + qr.countTidak; // countTidak sudah termasuk Setengah dan TidakAda
                   const yaPct = total > 0 ? Math.round((qr.countYa / total) * 100) : 0;
-                  const tidakPct = total > 0 ? Math.round((qr.countTidak / total) * 100) : 0;
+                  
+                  // Hitung nilai dan persentase untuk indikator ke-2 dan ke-3
+                  let countIndikator2 = qr.countTidak;
+                  let countIndikator3 = qr.countTidakAda ?? 0;
+                  let labelIndikator2 = "Tidak";
+                  let labelIndikator3 = "Tidak Ada";
+                  
+                  if (isHydrant) {
+                    countIndikator2 = qr.countTidak - countIndikator3;
+                    labelIndikator3 = "Tidak ada hydrant";
+                  } else if (isSaranaProteksi) {
+                    countIndikator2 = qr.countSetengah ?? 0;
+                    labelIndikator2 = "Kurang Baik";
+                    labelIndikator3 = "Tidak"; // Tidak Ada diubah labelnya jadi Tidak
+                  }
+                  
+                  const pctIndikator2 = total > 0 ? Math.round((countIndikator2 / total) * 100) : 0;
+                  const pctIndikator3 = total > 0 ? Math.round((countIndikator3 / total) * 100) : 0;
+
+                  const hasData = total > 0 || countIndikator3 > 0;
 
                   return (
                     <td key={q.sheetHeader} className="text-center py-2 align-top">
-                      {total > 0 ? (
+                      {hasData ? (
                         <div className="flex flex-col gap-2">
+                          {/* Indikator 1: Ya */}
                           <div className="flex flex-col items-center justify-center bg-green-50/50 dark:bg-green-900/10 p-1.5 rounded border border-green-100 dark:border-green-800/50">
+                            <span className="text-[9px] font-semibold text-green-600 dark:text-green-500 mb-0.5">Ya</span>
                             <span className="font-bold text-green-700 dark:text-green-400">{qr.countYa}</span>
-                            <span className="text-[10px] font-bold bg-green-200 dark:bg-green-800 text-green-900 dark:text-green-100 px-1.5 py-0.5 rounded-md leading-none mt-1">{yaPct}%</span>
+                            {total > 0 && <span className="text-[10px] font-bold bg-green-200 dark:bg-green-800 text-green-900 dark:text-green-100 px-1.5 py-0.5 rounded-md leading-none mt-1">{yaPct}%</span>}
                           </div>
-                          <div className="flex flex-col items-center justify-center bg-red-50/50 dark:bg-red-900/10 p-1.5 rounded border border-red-100 dark:border-red-800/50">
-                            <span className="font-bold text-red-700 dark:text-red-400">{qr.countTidak}</span>
-                            <span className="text-[10px] font-bold bg-red-200 dark:bg-red-800 text-red-900 dark:text-red-100 px-1.5 py-0.5 rounded-md leading-none mt-1">{tidakPct}%</span>
+                          
+                          {/* Indikator 2: Tidak / Kurang Baik */}
+                          <div className={`flex flex-col items-center justify-center p-1.5 rounded border ${
+                            isSaranaProteksi 
+                              ? "bg-amber-50/50 dark:bg-amber-900/10 border-amber-100 dark:border-amber-800/50" 
+                              : "bg-red-50/50 dark:bg-red-900/10 border-red-100 dark:border-red-800/50"
+                          }`}>
+                            <span className={`text-[9px] font-semibold mb-0.5 ${
+                              isSaranaProteksi ? "text-amber-600 dark:text-amber-500" : "text-red-600 dark:text-red-500"
+                            }`}>{labelIndikator2}</span>
+                            <span className={`font-bold ${
+                              isSaranaProteksi ? "text-amber-700 dark:text-amber-400" : "text-red-700 dark:text-red-400"
+                            }`}>{countIndikator2}</span>
+                            {total > 0 && <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md leading-none mt-1 ${
+                              isSaranaProteksi 
+                                ? "bg-amber-200 dark:bg-amber-800 text-amber-900 dark:text-amber-100" 
+                                : "bg-red-200 dark:bg-red-800 text-red-900 dark:text-red-100"
+                            }`}>{pctIndikator2}%</span>}
                           </div>
+                          
+                          {/* Indikator 3: Tidak Ada (atau Tidak untuk sarana proteksi) */}
+                          {(isHydrant || isSaranaProteksi) && qr.countTidakAda !== undefined && (
+                            <div className={`flex flex-col items-center justify-center p-1.5 rounded border ${
+                              isSaranaProteksi 
+                                ? "bg-red-100/50 dark:bg-red-900/30 border-red-200 dark:border-red-700/50"
+                                : (isHydrant ? "bg-orange-50/50 dark:bg-orange-900/20 border-orange-200 dark:border-orange-700/50" : "bg-red-100/50 dark:bg-red-900/30 border-red-200 dark:border-red-700/50")
+                            }`}>
+                              <span className={`text-[9px] font-semibold mb-0.5 text-center leading-tight ${
+                                isSaranaProteksi 
+                                  ? "text-red-800 dark:text-red-300"
+                                  : (isHydrant ? "text-orange-700 dark:text-orange-300" : "text-red-800 dark:text-red-300")
+                              }`}>
+                                {labelIndikator3}
+                              </span>
+                              <span className={`font-bold ${
+                                isSaranaProteksi 
+                                  ? "text-red-800 dark:text-red-400"
+                                  : (isHydrant ? "text-orange-700 dark:text-orange-400" : "text-red-800 dark:text-red-400")
+                              }`}>{countIndikator3}</span>
+                              {total > 0 && <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md leading-none mt-1 ${
+                                isSaranaProteksi 
+                                  ? "bg-red-200 dark:bg-red-800 text-red-900 dark:text-red-100"
+                                  : (isHydrant ? "bg-orange-200 dark:bg-orange-800 text-orange-900 dark:text-orange-100" : "bg-red-200 dark:bg-red-800 text-red-900 dark:text-red-100")
+                              }`}>{pctIndikator3}%</span>}
+                            </div>
+                          )}
                         </div>
                       ) : (
                         <span className="font-bold text-gray-400">-</span>
@@ -745,7 +891,7 @@ export default function SubmissionTable({
                   }
                   return <td key={l} className="text-center font-bold text-red-800 dark:text-red-400">-</td>;
                 })}
-                <td></td>
+                {isB3 ? <><td></td><td></td></> : <td></td>}
               </tr>
             </tfoot>
           )}

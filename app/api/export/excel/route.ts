@@ -63,9 +63,9 @@ function applyDataRow(row: ExcelJS.Row, idx: number): void {
   row.height = 40; // taller to accommodate wrapped text
 }
 
-function jawabanDisplay(val: string): string {
+function jawabanDisplay(val: string, moduleSlug?: string): string {
   if (val === "Ya") return "✓ Ya";
-  if (val === "Tidak") return "✗ Tidak";
+  if (val === "Tidak") return moduleSlug === "sarana-proteksi" ? "✗ Tidak Ada" : "✗ Tidak";
   if (val === "Setengah") return "⚠️ Kurang Baik";
   if (val === "N/A") return "N/A";
   return "-";
@@ -502,7 +502,7 @@ export async function GET(request: Request) {
             }
           }
 
-          return a ? jawabanDisplay(a.jawaban) : "-";
+          return a ? jawabanDisplay(a.jawaban, mod.slug) : "-";
         };
 
         const vals: (string | number)[] = [

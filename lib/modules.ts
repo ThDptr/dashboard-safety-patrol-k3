@@ -1,7 +1,10 @@
-// ����������������������������������������������������������������������������������������������������������������������������������������������������������
-// lib/modules.ts � 17 Modul/Topik Patroli (Single Source of Truth)
+// ============================================================================
+// lib/modules.ts — 17 Modul/Topik Patroli (Single Source of Truth)
 // Dashboard Patroli Kesling & K3 RSOMH
-// ����������������������������������������������������������������������������������������������������������������������������������������������������������
+// ============================================================================
+// Semua sheetHeader diselaraskan dengan readm.md (mapping kolom A–DU)
+// pada Google Sheet "Form Responses 1" yang baru.
+// ============================================================================
 
 export type JawabanType = "yntb" | "yn"; // yntb = Ya/Tidak/N/A, yn = Ya/Tidak only
 
@@ -39,12 +42,12 @@ export interface ModuleDef {
   /** Which form branch this module belongs to */
   scope: ModuleScope;
   /**
-   * Scored Yes/No questions � these drive the % calculation.
+   * Scored Yes/No questions — these drive the % calculation.
    * N/A answers are excluded from denominator.
    */
   questions: QuestionDef[];
   /**
-   * Non-scored fields (counts, dates, free text, flags) � displayed as info,
+   * Non-scored fields (counts, dates, free text, flags) — displayed as info,
    * not used in % calculation.
    */
   extraFields?: ExtraFieldDef[];
@@ -52,6 +55,12 @@ export interface ModuleDef {
   photoHeader?: string;
   /** Column header for the findings description */
   descriptionHeader?: string;
+  /**
+   * Secondary photo/description group header — used when a module has two
+   * distinct observation sections (e.g. B3 has separate Eyewasher/Bodywasher section).
+   */
+  secondaryPhotoHeader?: string;
+  secondaryDescriptionHeader?: string;
   /**
    * If true, this module has no scored questions and is displayed
    * as a log/activity list only (e.g. Sosialisasi).
@@ -64,9 +73,9 @@ export interface ModuleDef {
   badgeHeader?: string;
 }
 
-// ����������������������������������������������������������������������������������������������������������������������������������������������������������
+// ============================================================================
 // A. Dalam Gedung — Bulanan  (6 modul)
-// ����������������������������������������������������������������������������������������������������������������������������������������������������������
+// ============================================================================
 
 const PERALATAN_KERJA: ModuleDef = {
   slug: "peralatan-kerja",
@@ -76,14 +85,13 @@ const PERALATAN_KERJA: ModuleDef = {
   scope: "DALAM_BULANAN",
   questions: [
     {
-      sheetHeader:
-        "Peralatan Kerja [Peralatan Kerja - Ergonomi]",
-      label: "Mobiler ergonomi",
+      sheetHeader: "Peralatan Kerja [Peralatan Kerja - Ergonomi]",
+      label: "Peralatan Kerja - Ergonomi",
       type: "yntb",
     },
     {
       sheetHeader: "Peralatan Kerja [Peralatan Kerja - Penempatan Teratur dan 5R]",
-      label: "Penempatan dan 5R",
+      label: "Peralatan Kerja - Penempatan Teratur dan 5R",
       type: "yntb",
     },
   ],
@@ -100,13 +108,12 @@ const PERALATAN_MEDIK: ModuleDef = {
   questions: [
     {
       sheetHeader: "Peralatan Medik [Peralatan Medik - Berfungsi baik]",
-      label: "Berfungsi baik",
+      label: "Peralatan Medik - Berfungsi baik",
       type: "yntb",
     },
     {
-      sheetHeader:
-        "Peralatan Medik [Peralatan Medik - Kartu/Label kalibrasi masih berlaku (pilih N/A jika di ruangan tidak terdapat peralatan medik)]",
-      label: "Kartu/label kalibrasi berlaku",
+      sheetHeader: "Peralatan Medik [Peralatan Medik - Kartu/Label kalibrasi masih berlaku]",
+      label: "Peralatan Medik - Kartu/Label kalibrasi masih berlaku",
       type: "yntb",
     },
   ],
@@ -122,16 +129,19 @@ const APAR: ModuleDef = {
   scope: "DALAM_BULANAN",
   extraFields: [
     {
-      sheetHeader: "APAR - Jumlah Apar Powder",
+      // readm.md kolom O
+      sheetHeader: "APAR - Jumlah APAR Powder",
       label: "Jumlah APAR Powder",
       fieldType: "number",
     },
     {
-      sheetHeader: "APAR - Jumlah Apar Powder CO2",
+      // readm.md kolom P
+      sheetHeader: "APAR - Jumlah APAR CO2",
       label: "Jumlah APAR CO2",
       fieldType: "number",
     },
     {
+      // readm.md kolom T
       sheetHeader: "APAR - Tanggal pemeliharaan terakhir",
       label: "Tgl. Pemeliharaan Terakhir",
       fieldType: "date",
@@ -139,18 +149,19 @@ const APAR: ModuleDef = {
   ],
   questions: [
     {
+      // Header asli Google Sheet: "APAR  [APAR - Terjangkau]" (double space)
       sheetHeader: "APAR  [APAR - Terjangkau]",
-      label: "Terjangkau",
+      label: "APAR - Terjangkau",
       type: "yntb",
     },
     {
       sheetHeader: "APAR  [APAR - Rambu dan SOP terpasang]",
-      label: "Rambu dan SOP",
+      label: "APAR - Rambu dan SOP terpasang",
       type: "yntb",
     },
     {
       sheetHeader: "APAR  [APAR - Kartu pemeliharaan terisi]",
-      label: "Kartu pemeliharaan terisi",
+      label: "APAR - Kartu pemeliharaan terisi",
       type: "yntb",
     },
   ],
@@ -164,32 +175,25 @@ const HYDRANT: ModuleDef = {
   icon: "🚒",
   group: "Dalam Gedung — Bulanan",
   scope: "DALAM_BULANAN",
-  extraFields: [
-    {
-      sheetHeader: "Terdapat Hydrant",
-      label: "Terdapat Hydrant",
-      fieldType: "yn",
-    },
-  ],
   questions: [
     {
       sheetHeader: "HYDRANT [Hydrant - Box tersedia dan lengkap]",
-      label: "Box tersedia dan lengkap",
+      label: "Hydrant - Box tersedia dan lengkap",
       type: "yn",
     },
     {
       sheetHeader: "HYDRANT [Hydrant - SOP terpasang]",
-      label: "SOP terpasang",
+      label: "Hydrant - SOP terpasang",
       type: "yn",
     },
     {
       sheetHeader: "HYDRANT [Hydrant - Fire alarm]",
-      label: "Fire alarm",
+      label: "Hydrant - Fire alarm",
       type: "yn",
     },
     {
-      sheetHeader: "HYDRANT [Terdapat kartu pemeliharaan yang masih berlaku]",
-      label: "Kartu pemeliharaan berlaku",
+      sheetHeader: "HYDRANT [Hydrant - Terdapat kartu pemeliharaan berlaku ]",
+      label: "Hydrant - Terdapat kartu pemeliharaan berlaku",
       type: "yn",
     },
   ],
@@ -205,20 +209,13 @@ const SARANA_PROTEKSI: ModuleDef = {
   scope: "DALAM_BULANAN",
   questions: [
     {
-      sheetHeader:
-        "Sarana Proteksi Kebakaran [Sarana Proteksi - Smoke Detector]",
-      label: "Smoke Detector",
-      type: "yntb",
-    },
-    {
-      sheetHeader:
-        "Sarana Proteksi Kebakaran [Sarana Proteksi - Heat Detector]",
-      label: "Heat Detector",
+      sheetHeader: "Sarana Proteksi Kebakaran [Sarana Proteksi - Smoke Detector/Heat Detector]",
+      label: "Sarana Proteksi - Smoke Detector/Heat Detector",
       type: "yntb",
     },
     {
       sheetHeader: "Sarana Proteksi Kebakaran [Sarana Proteksi - Sprinkler]",
-      label: "Sprinkler",
+      label: "Sarana Proteksi - Sprinkler",
       type: "yntb",
     },
   ],
@@ -235,58 +232,57 @@ const RAMBU: ModuleDef = {
   questions: [
     {
       sheetHeader: "Rambu Keselamatan [Rambu - Jalur evakuasi]",
-      label: "Jalur evakuasi",
+      label: "Rambu - Jalur evakuasi",
       type: "yntb",
     },
     {
       sheetHeader: "Rambu Keselamatan [Rambu - Exit/keluar]",
-      label: "Exit/keluar",
+      label: "Rambu - Exit/keluar",
       type: "yntb",
     },
     {
-      sheetHeader: "Rambu Keselamatan [Rambu - Hati-hati terpeleset]",
-      label: "Hati-hati terpeleset",
+      sheetHeader: "Rambu Keselamatan [Rambu - Peringatan]",
+      label: "Rambu - Peringatan",
       type: "yntb",
     },
     {
-      sheetHeader: "Rambu Keselamatan [Rambu - Hati-hati tersandung]",
-      label: "Hati-hati tersandung",
+      sheetHeader: "Rambu Keselamatan [Rambu - Hati-hati tersandung (pilih N/A, jika tidak ada lantai beda ketinggian)]",
+      label: "Rambu - Hati-hati tersandung",
       type: "yntb",
     },
     {
       sheetHeader: "Rambu Keselamatan [Rambu - Peta evakuasi]",
-      label: "Peta evakuasi",
+      label: "Rambu - Peta evakuasi",
       type: "yntb",
     },
     {
-      sheetHeader: "Rambu Keselamatan [Rambu - Bis pada anak tangga]",
-      label: "Bis pada anak tangga",
+      sheetHeader: "Rambu Keselamatan [Rambu - Bis pada anak tangga (Pilih N/A, jika tidak ada tangga)]",
+      label: "Rambu - Bis pada anak tangga",
       type: "yntb",
     },
     {
-      sheetHeader: "Rambu Keselamatan [Rambu - Titik kumpul]",
-      label: "Titik kumpul",
+      sheetHeader: "Rambu Keselamatan [Rambu - Titik kumpul (Selain IGD dan Singgalang 1, pilih N/A)]",
+      label: "Rambu - Titik kumpul",
       type: "yntb",
     },
     {
       sheetHeader: "Rambu Keselamatan [Rambu - Dilarang merokok]",
-      label: "Dilarang merokok",
+      label: "Rambu - Dilarang merokok",
       type: "yntb",
     },
     {
       sheetHeader: "Rambu Keselamatan [Rambu - Hemat listrik/air]",
-      label: "Hemat listrik/air",
+      label: "Rambu - Hemat listrik/air",
       type: "yntb",
     },
   ],
   photoHeader: "Foto Temuan - Rambu Keselamatan",
-  descriptionHeader:
-    "Rambu Keselamatan : Deskripsi singkat (lokasi, kondisi, dan risiko)",
+  descriptionHeader: "Deskripsi Temuan - Rambu Keselamatan",
 };
 
-// ����������������������������������������������������������������������������������������������������������������������������������������������������������
+// ============================================================================
 // B. Dalam Gedung — Harian  (8 modul)
-// ����������������������������������������������������������������������������������������������������������������������������������������������������������
+// ============================================================================
 
 const ELEKTRIK: ModuleDef = {
   slug: "elektrik",
@@ -297,12 +293,12 @@ const ELEKTRIK: ModuleDef = {
   questions: [
     {
       sheetHeader: "Elektrik [Elektrik - Perkabelan aman]",
-      label: "Perkabelan aman",
+      label: "Elektrik - Perkabelan aman",
       type: "yntb",
     },
     {
-      sheetHeader: "Elektrik [Elektrik - Sambungan listrik aman]",
-      label: "Sambungan listrik aman",
+      sheetHeader: "Elektrik [Elektrik - Sumber  dan sambungan listrik aman]",
+      label: "Elektrik - Sumber dan sambungan listrik aman",
       type: "yntb",
     },
   ],
@@ -313,20 +309,18 @@ const ELEKTRIK: ModuleDef = {
 const EVAKUASI: ModuleDef = {
   slug: "evakuasi",
   title: "Keamanan Jalur Evakuasi",
-  icon: "🚪",
+  icon: "🚶",
   group: "Dalam Gedung — Harian",
   scope: "DALAM_HARIAN",
   questions: [
     {
-      sheetHeader:
-        "Keamanan Jalur Evakuasi [Jalur Evakuasi - Bebas hambatan]",
-      label: "Bebas hambatan",
+      sheetHeader: "Keamanan Jalur Evakuasi [Jalur Evakuasi - Bebas hambatan]",
+      label: "Jalur Evakuasi - Bebas hambatan",
       type: "yntb",
     },
     {
-      sheetHeader:
-        "Keamanan Jalur Evakuasi [Jalur Evakuasi - Pintu darurat berfungsi]",
-      label: "Pintu darurat berfungsi",
+      sheetHeader: "Keamanan Jalur Evakuasi [Jalur Evakuasi - Pintu darurat berfungsi (Pilih N/A, jika tidak ada pintu darurat)]",
+      label: "Jalur Evakuasi - Pintu darurat berfungsi (Pilih N/A, jika tidak ada pintu darurat)",
       type: "yntb",
     },
   ],
@@ -342,50 +336,43 @@ const KEBERSIHAN: ModuleDef = {
   scope: "DALAM_HARIAN",
   questions: [
     {
-      sheetHeader:
-        "Kelengkapan, Keamanan dan Kebersihan Sarana [Kebersihan - Dinding bersih]",
-      label: "Dinding bersih",
+      sheetHeader: "Kelengkapan, Keamanan dan Kebersihan Sarana [Keamanan - Dinding Aman]",
+      label: "Keamanan - Dinding Aman",
       type: "yntb",
     },
     {
-      sheetHeader:
-        "Kelengkapan, Keamanan dan Kebersihan Sarana [Kebersihan - Pintu/jendela berfungsi]",
-      label: "Pintu/jendela berfungsi",
+      sheetHeader: "Kelengkapan, Keamanan dan Kebersihan Sarana [Keamanan - Pintu/jendela Aman]",
+      label: "Keamanan - Pintu/jendela Aman",
       type: "yntb",
     },
     {
-      sheetHeader:
-        "Kelengkapan, Keamanan dan Kebersihan Sarana [Kebersihan - Lantai bersih dan rata]",
-      label: "Lantai bersih dan rata",
+      sheetHeader: "Kelengkapan, Keamanan dan Kebersihan Sarana [Keamanan - Lantai Aman]",
+      label: "Keamanan - Lantai Aman",
       type: "yntb",
     },
     {
-      sheetHeader:
-        "Kelengkapan, Keamanan dan Kebersihan Sarana [Kebersihan - Plafon bersih]",
-      label: "Plafon bersih",
+      sheetHeader: "Kelengkapan, Keamanan dan Kebersihan Sarana [Keamanan - Plafon Aman]",
+      label: "Keamanan - Plafon Aman",
       type: "yntb",
     },
     {
-      sheetHeader:
-        "Kelengkapan, Keamanan dan Kebersihan Sarana [Kebersihan - Lampu berfungsi]",
-      label: "Lampu berfungsi",
+      sheetHeader: "Kelengkapan, Keamanan dan Kebersihan Sarana [Keamanan - Lampu berfungsi]",
+      label: "Keamanan - Lampu berfungsi",
       type: "yntb",
     },
     {
-      sheetHeader:
-        "Kelengkapan, Keamanan dan Kebersihan Sarana [Kebersihan - Ventilasi tersedia]",
-      label: "Ventilasi tersedia",
+      sheetHeader: "Kelengkapan, Keamanan dan Kebersihan Sarana [Keamanan - Ventilasi tersedia]",
+      label: "Keamanan - Ventilasi tersedia",
       type: "yntb",
     },
     {
-      sheetHeader:
-        "Kelengkapan, Keamanan dan Kebersihan Sarana [Kebersihan - Tidak ada puntung rokok]",
-      label: "Tidak ada puntung rokok",
+      sheetHeader: "Kelengkapan, Keamanan dan Kebersihan Sarana [Keamanan - Tidak ada puntung rokok]",
+      label: "Keamanan - Tidak ada puntung rokok",
       type: "yntb",
     },
   ],
-  photoHeader: "Foto Temuan - Kebersihan Sarana",
-  descriptionHeader: "Deskripsi Temuan - Kebersihan Sarana",
+  photoHeader: "Foto Temuan - Keamanan Sarana",
+  descriptionHeader: "Deskripsi Temuan - Keamanan Sarana",
 };
 
 const RISIKO: ModuleDef = {
@@ -396,23 +383,23 @@ const RISIKO: ModuleDef = {
   scope: "DALAM_HARIAN",
   questions: [
     {
-      sheetHeader: "Risiko Kecelakaan  [Risiko - Anak tangga aman]",
-      label: "Anak tangga aman",
+      sheetHeader: "Risiko Kecelakaan  [Risiko - Anak tangga aman (pilih N/A, jika tidak ada tangga)]",
+      label: "Risiko - Anak tangga aman (pilih N/A, jika tidak ada tangga)",
       type: "yntb",
     },
     {
       sheetHeader: "Risiko Kecelakaan  [Risiko - Lantai aman]",
-      label: "Lantai aman",
+      label: "Risiko - Lantai aman",
       type: "yntb",
     },
     {
-      sheetHeader: "Risiko Kecelakaan  [Risiko - Jalur Ramp aman]",
-      label: "Jalur Ramp aman",
+      sheetHeader: "Risiko Kecelakaan  [Risiko - Jalur Ramp aman (Selain Singgalang Lt2, Singgalang Lt3 dan Poli Lt 2, pilih N/A)]",
+      label: "Risiko - Jalur Ramp aman (Selain Singgalang Lt2, Singgalang Lt3 dan Poli Lt 2, pilih N/A)",
       type: "yntb",
     },
     {
       sheetHeader: "Risiko Kecelakaan  [Risiko - Penempatan alat aman]",
-      label: "Penempatan alat aman",
+      label: "Risiko - Penempatan alat aman",
       type: "yntb",
     },
   ],
@@ -429,15 +416,16 @@ const APD: ModuleDef = {
   questions: [
     {
       sheetHeader: "APD [APD - Ketersediaan terpenuhi]",
-      label: "Ketersediaan terpenuhi",
+      label: "APD - Ketersediaan terpenuhi",
       type: "yntb",
     },
     {
       sheetHeader: "APD [APD - Karyawan menggunakan APD sesuai]",
-      label: "Karyawan menggunakan APD sesuai",
+      label: "APD - Karyawan menggunakan APD sesuai",
       type: "yntb",
     },
   ],
+  // readm.md kolom BQ–BU: [1]–[5] (bukan [lebih])
   badgeHeader: "APD - Unit Tidak Patuh (gabungan)",
   photoHeader: "Foto Temuan - APD",
   descriptionHeader: "Deskripsi Temuan - APD",
@@ -452,7 +440,7 @@ const SAMPAH: ModuleDef = {
   questions: [
     {
       sheetHeader: "Sampah [B3 - Sampah sesuai label]",
-      label: "Sampah sesuai label",
+      label: "B3 - Sampah sesuai label",
       type: "yntb",
     },
   ],
@@ -466,48 +454,35 @@ const CODE_RED: ModuleDef = {
   icon: "🚨",
   group: "Dalam Gedung — Harian",
   scope: "DALAM_HARIAN",
-  extraFields: [
-    {
-      sheetHeader: "CODE RED -  terdapat Papan Code Red",
-      label: "Terdapat Papan Code Red",
-      fieldType: "yn",
-    },
-  ],
   questions: [
     {
-      sheetHeader:
-        "Sarana Proteksi Kebakaran : CODE RED [CODE RED - Papan Code Red kondisi baik]",
-      label: "Papan Code Red kondisi baik",
+      sheetHeader: "Sarana Proteksi Kebakaran : CODE RED [CODE RED - Papan kondisi baik]",
+      label: "CODE RED - Papan kondisi baik",
       type: "yntb",
     },
     {
-      sheetHeader:
-        "Sarana Proteksi Kebakaran : CODE RED [CODE RED - Helm merah kondisi baik]",
-      label: "Helm merah kondisi baik",
+      sheetHeader: "Sarana Proteksi Kebakaran : CODE RED [CODE RED - Helm merah kondisi baik]",
+      label: "CODE RED - Helm merah kondisi baik",
       type: "yntb",
     },
     {
-      sheetHeader:
-        "Sarana Proteksi Kebakaran : CODE RED [CODE RED - Helm putih kondisi baik]",
-      label: "Helm putih kondisi baik",
+      sheetHeader: "Sarana Proteksi Kebakaran : CODE RED [CODE RED - Helm putih kondisi baik]",
+      label: "CODE RED - Helm putih kondisi baik",
       type: "yntb",
     },
     {
-      sheetHeader:
-        "Sarana Proteksi Kebakaran : CODE RED [CODE RED - Helm biru kondisi baik]",
-      label: "Helm biru kondisi baik",
+      sheetHeader: "Sarana Proteksi Kebakaran : CODE RED [CODE RED - Helm biru kondisi baik]",
+      label: "CODE RED - Helm biru kondisi baik",
       type: "yntb",
     },
     {
-      sheetHeader:
-        "Sarana Proteksi Kebakaran : CODE RED [CODE RED - Helm kuning kondisi baik]",
-      label: "Helm kuning kondisi baik",
+      sheetHeader: "Sarana Proteksi Kebakaran : CODE RED [CODE RED - Helm kuning kondisi baik]",
+      label: "CODE RED - Helm kuning kondisi baik",
       type: "yntb",
     },
     {
-      sheetHeader:
-        "Sarana Proteksi Kebakaran : CODE RED [CODE RED - Papan terisi tanggal dan nama]",
-      label: "Papan terisi tanggal dan nama",
+      sheetHeader: "Sarana Proteksi Kebakaran : CODE RED [CODE RED - Papan terisi tanggal dan nama]",
+      label: "CODE RED - Papan terisi tanggal dan nama",
       type: "yntb",
     },
   ],
@@ -521,14 +496,16 @@ const SOSIALISASI: ModuleDef = {
   icon: "🗣️",
   group: "Dalam Gedung — Harian",
   scope: "DALAM_HARIAN",
-  questions: [], // No scored questions � log only
+  questions: [], // No scored questions — log only
   extraFields: [
     {
+      // readm.md kolom CI
       sheetHeader: "Sosialisasi - Topik",
       label: "Topik",
       fieldType: "checkbox",
     },
     {
+      // readm.md kolom CJ
       sheetHeader: "Sosialisasi - Sasaran",
       label: "Sasaran",
       fieldType: "text",
@@ -539,9 +516,9 @@ const SOSIALISASI: ModuleDef = {
   logOnly: true,
 };
 
-// ����������������������������������������������������������������������������������������������������������������������������������������������������������
+// ============================================================================
 // C. Jalur Khusus  (3 modul)
-// ����������������������������������������������������������������������������������������������������������������������������������������������������������
+// ============================================================================
 
 const PCRA: ModuleDef = {
   slug: "pcra",
@@ -551,6 +528,7 @@ const PCRA: ModuleDef = {
   scope: "PCRA",
   extraFields: [
     {
+      // readm.md kolom CM
       sheetHeader: "PCRA - Lokasi dan deskripsi pekerjaan",
       label: "Lokasi & Deskripsi Pekerjaan",
       fieldType: "text",
@@ -559,37 +537,37 @@ const PCRA: ModuleDef = {
   questions: [
     {
       sheetHeader: "PCRA [PCRA - Sosialisasi K3 dari kontraktor]",
-      label: "Sosialisasi K3 dari kontraktor",
+      label: "PCRA - Sosialisasi K3 dari kontraktor",
       type: "yntb",
     },
     {
       sheetHeader: "PCRA [PCRA - Pekerja menggunakan APD lengkap]",
-      label: "Pekerja menggunakan APD lengkap",
+      label: "PCRA - Pekerja menggunakan APD lengkap",
       type: "yntb",
     },
     {
       sheetHeader: "PCRA [PCRA - Pembatasan area (barrier)]",
-      label: "Pembatasan area (barrier)",
+      label: "PCRA - Pembatasan area (barrier)",
       type: "yntb",
     },
     {
       sheetHeader: "PCRA [PCRA - Rambu keselamatan terpasang]",
-      label: "Rambu keselamatan terpasang",
+      label: "PCRA - Rambu keselamatan terpasang",
       type: "yntb",
     },
     {
       sheetHeader: "PCRA [PCRA - Tidak ada pekerja merokok]",
-      label: "Tidak ada pekerja merokok",
+      label: "PCRA - Tidak ada pekerja merokok",
       type: "yntb",
     },
     {
       sheetHeader: "PCRA [PCRA - Tempat material rapi dan bersih]",
-      label: "Tempat material rapi dan bersih",
+      label: "PCRA - Tempat material rapi dan bersih",
       type: "yntb",
     },
     {
       sheetHeader: "PCRA [PCRA - Pembersihan sisa pekerjaan]",
-      label: "Pembersihan sisa pekerjaan",
+      label: "PCRA - Pembersihan sisa pekerjaan",
       type: "yntb",
     },
   ],
@@ -605,21 +583,25 @@ const LUAR_GEDUNG: ModuleDef = {
   scope: "LUAR_GEDUNG",
   extraFields: [
     {
+      // readm.md kolom CX
       sheetHeader: "APAR Luar -  Jumlah APAR Powder 6 kg",
       label: "Jumlah APAR Powder 6 kg",
       fieldType: "number",
     },
     {
+      // readm.md kolom CY
       sheetHeader: "APAR Luar -  Jumlah APAR Powder 25 kg",
       label: "Jumlah APAR Powder 25 kg",
       fieldType: "number",
     },
     {
+      // readm.md kolom CZ
       sheetHeader: "APAR Luar -  Jumlah APAR CO2",
       label: "Jumlah APAR CO2",
       fieldType: "number",
     },
     {
+      // readm.md kolom DD
       sheetHeader: "APAR Luar - Tanggal pemeliharaan terakhir",
       label: "Tgl. Pemeliharaan Terakhir",
       fieldType: "date",
@@ -628,18 +610,17 @@ const LUAR_GEDUNG: ModuleDef = {
   questions: [
     {
       sheetHeader: "Luar Gedung : APAR [APAR Luar - Terjangkau]",
-      label: "APAR Terjangkau",
+      label: "APAR Luar - Terjangkau",
       type: "yntb",
     },
     {
-      sheetHeader: "Luar Gedung : APAR [APAR Luar - Rambu dan SOP]",
-      label: "Rambu dan SOP",
+      sheetHeader: "Luar Gedung : APAR [APAR Luar - Rambu dan SOP Terpasang]",
+      label: "APAR Luar - Rambu dan SOP",
       type: "yntb",
     },
     {
-      sheetHeader:
-        "Luar Gedung : APAR [APAR Luar - Kartu pemeliharaan terisi]",
-      label: "Kartu pemeliharaan terisi",
+      sheetHeader: "Luar Gedung : APAR [APAR Luar - Kartu pemeliharaan terisi]",
+      label: "APAR Luar - Kartu pemeliharaan terisi",
       type: "yntb",
     },
   ],
@@ -655,61 +636,69 @@ const B3: ModuleDef = {
   scope: "B3",
   extraFields: [
     {
+      // readm.md kolom DH
       sheetHeader: "B3 - Jumlah Lemari ",
       label: "Jumlah Lemari B3",
       fieldType: "number",
     },
     {
-      sheetHeader: "B3 - Jumlah Eyewasher",
+      // readm.md kolom DQ
+      sheetHeader: "Jumlah Eyewasher",
       label: "Jumlah Eyewasher",
       fieldType: "number",
     },
     {
-      sheetHeader: "B3 - Jumlah Bodywasher",
+      // readm.md kolom DS
+      sheetHeader: "Jumlah Bodywasher",
       label: "Jumlah Bodywasher",
       fieldType: "number",
     },
   ],
   questions: [
     {
-      sheetHeader: "B3 [B3 - Penyimpanan B3]",
-      label: "Penyimpanan B3",
+      sheetHeader: "B3 [B3 - Penyimpanan Terpisah]",
+      label: "B3 - Penyimpanan B3",
       type: "yntb",
     },
     {
       sheetHeader: "B3 [B3 - Ketersediaan SDS]",
-      label: "Ketersediaan SDS",
+      label: "B3 - Ketersediaan SDS",
       type: "yntb",
     },
     {
       sheetHeader: "B3 [B3 - Ketersediaan Spill Kit]",
-      label: "Ketersediaan Spill Kit",
+      label: "B3 - Ketersediaan Spill Kit",
       type: "yntb",
     },
     {
       sheetHeader: "B3 [B3 - Kelengkapan Spill Kit]",
-      label: "Kelengkapan Spill Kit",
+      label: "B3 - Kelengkapan Spill Kit",
       type: "yntb",
     },
     {
-      sheetHeader: "  B3 - Eyewasher berfungsi baik  ",
+      sheetHeader: "Eyewasher berfungsi baik  ",
       label: "Eyewasher berfungsi baik",
       type: "yntb",
     },
     {
-      sheetHeader: "  B3 - Bodywasher berfungsi baik  ",
+      sheetHeader: "Bodywasher berfungsi baik  ",
       label: "Bodywasher berfungsi baik",
       type: "yntb",
     },
   ],
+  // readm.md kolom DM
   badgeHeader: "B3 - Sub-Unit Bermasalah ",
+  // a. Penyimpanan B3, SDS, Spill Kit
   photoHeader: "Foto Temuan - B3",
   descriptionHeader: "Deskripsi Temuan - B3",
+  // c. Eyewasher & Bodywasher (foto & deskripsi terpisah)
+  secondaryPhotoHeader: "Foto Temuan - Eyewasher dan Bodywasher",
+  secondaryDescriptionHeader: "Deskripsi Temuan - Eyewasher dan Bodywasher",
 };
 
-// ����������������������������������������������������������������������������������������������������������������������������������������������������������
-// Master list � ORDER MATTERS (determines sidebar order)
-// ����������������������������������������������������������������������������������������������������������������������������������������������������������
+// ============================================================================
+// Master list — ORDER MATTERS (determines sidebar order)
+// ============================================================================
 
 export const MODULES: ModuleDef[] = [
   // Bulanan
@@ -770,5 +759,3 @@ export const LOKASI_LUAR_GEDUNG = [
   "Ruang Genset Luar Penunjang",
   "TPS B3",
 ] as const;
-
-

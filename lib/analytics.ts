@@ -35,6 +35,8 @@ export interface QuestionResult {
   targetPct?: number;
   /** Description/Narasi from Master Pertanyaan */
   description?: string;
+  countTidakAda?: number;
+  countSetengah?: number;
 }
 
 // ─── Per-Submission Result ────────────────────────────────────────────────────
@@ -56,6 +58,10 @@ export interface SubmissionResult {
   tags: string[];
   /** Extra fields (counts, dates) */
   extras: Array<{ label: string; value: string; raw: string }>;
+  /** Secondary description (e.g. Eyewasher for B3) */
+  secondaryDescription?: string;
+  /** Secondary photo URL */
+  secondaryPhotoUrl?: string;
 }
 
 // ─── Module Aggregate Result ──────────────────────────────────────────────────
@@ -75,8 +81,8 @@ export interface ModuleAggregateResult {
 // ─── Scope filter: which rows belong to this module? ─────────────────────────
 
 export function rowMatchesModule(row: PatroliRow, module: ModuleDef): boolean {
-  const jenis = row.jenisPemantauan;
-  const freq = row.frekuensiPemantauan;
+  const jenis = row.jenisPemantauan.trim();
+  const freq = row.frekuensiPemantauan.trim();
 
   switch (module.scope) {
     case "DALAM_BULANAN":
@@ -88,7 +94,8 @@ export function rowMatchesModule(row: PatroliRow, module: ModuleDef): boolean {
     case "LUAR_GEDUNG":
       return jenis === "Luar Gedung";
     case "B3":
-      // Actual Jenis Pemantauan value from the form (has double space)
+      // Toleran terhadap berbagai kemungkinan nilai di form:
+      // "Keamanan B3 dan Limbah B3", "B3", "Keamanan  Bahan Beracun...", dll.
       return (
         jenis === "Keamanan  Bahan Beracun dan Berbahaya (B3) dan Limbah B3" ||
         jenis === "B3" ||
@@ -181,6 +188,13 @@ export function computeModuleAggregate(
 ): ModuleAggregateResult {
   // Precompute constants used inside loops
   const masterProfesi = masterData.filter(m => m.Ruangan?.startsWith('**')).map(m => m.Ruangan?.substring(2).trim().toLowerCase());
+  
+  const masterDataMap = new Map<string, any>();
+  masterData.forEach(m => {
+    if (m.Ruangan) masterDataMap.set(String(m.Ruangan).trim().toLowerCase(), m);
+    if (m.Lokasi) masterDataMap.set(String(m.Lokasi).trim().toLowerCase(), m);
+    if (m['Area Luar']) masterDataMap.set(String(m['Area Luar']).trim().toLowerCase(), m);
+  });
 
   // Filter rows relevant to this module
   const relevantRows = rows.filter((r) => rowMatchesModule(r, module));
@@ -204,6 +218,7 @@ export function computeModuleAggregate(
   const questionResults: QuestionResult[] = module.questions.map((q) => {
     let ya = 0;
     let tidak = 0;
+    let setengah = 0;
     let na = 0;
     let empty = 0;
 
@@ -212,7 +227,10 @@ export function computeModuleAggregate(
       
       if (module.slug === "apar" || module.slug === "luar-gedung") {
         // Master Data tells us "Total APAR Seharusnya" for this location
-        const mRow = masterData.find(m => m.Ruangan?.trim().toLowerCase() === row.ruangan?.trim().toLowerCase());
+        // PENTING: gunakan getDisplayLocation(row) bukan row.ruangan karena
+        // Luar Gedung menggunakan field "Lokasi" (kolom CW), bukan "Ruangan"
+        const locKey = getDisplayLocation(row).trim().toLowerCase();
+        const mRow = masterDataMap.get(locKey);
         let totalApar = 0;
         if (mRow) {
           if (module.slug === "apar") {
@@ -270,7 +288,7 @@ export function computeModuleAggregate(
           tidak += (totalApar - compliantCount);
         }
       } else if (module.slug === "apd") {
-        const mRow = masterData.find(m => m.Ruangan?.trim().toLowerCase() === row.ruangan?.trim().toLowerCase());
+        const mRow = masterDataMap.get(String(row.ruangan).trim().toLowerCase());
         const totalKaryawan = mRow ? (parseInt(mRow["Jumlah Karyawan"]) || 0) : 0;
         
         if (ans === "N/A") {
@@ -307,7 +325,7 @@ export function computeModuleAggregate(
           }
           
           nonCompliantCount = Math.max(0, nonCompliantCount - profViolations);
-          if (nonCompliantCount === 0 && profViolations === 0) nonCompliantCount = totalKaryawan; // Only assume full violation if no prof info
+          if (nonCompliantCount === 0 && profViolations === 0) nonCompliantCount = 1; // Only assume 1 violation if no prof info, as requested
           
           const compliantCount = Math.max(0, totalKaryawan - nonCompliantCount);
           ya += compliantCount;
@@ -315,7 +333,7 @@ export function computeModuleAggregate(
         }
       } else if (module.slug === "b3" && (q.label === "Penyimpanan B3" || q.label === "Ketersediaan SDS")) {
         let expectedCount = 1;
-        const mRow = masterData.find(m => m.Ruangan?.trim().toLowerCase() === row.ruangan?.trim().toLowerCase());
+        const mRow = masterDataMap.get(String(row.ruangan).trim().toLowerCase());
         expectedCount = mRow ? (parseInt(mRow["Jumlah Lemari B3"]) || 0) : 0;
         if (expectedCount === 0) {
           const extHeader = module.extraFields?.find(ext => ext.label === "Jumlah Lemari B3")?.sheetHeader || "";
@@ -343,19 +361,65 @@ export function computeModuleAggregate(
           tidak += (expectedCount - compliantCount);
         }
       } else {
-        if (ans === "Ya") ya++;
-        else if (ans === "Setengah") {
-          ya += 0.5;
-          tidak += 0.5;
+        if (ans === "Ya") {
+          ya++;
+        } else if (ans === "Setengah") {
+          setengah++;
+          // For sarana-proteksi, Setengah does NOT contribute to "Ya", but it contributes to "Tidak"
+          if (module.slug === "sarana-proteksi") {
+            tidak++; // "Kurang Baik" is counted as "Tidak Patuh"
+          } else {
+            ya += 0.5;
+            tidak += 0.5;
+          }
         }
-        else if (ans === "Tidak") tidak++;
+        else if (ans === "Tidak") {
+          tidak++;
+        }
+        // TidakAda (khusus Hydrant "Tidak ada hydrant") — masuk denominator sebagai tidak
+        else if (ans === "TidakAda") {
+          tidak++; // masuk denominator
+        }
         else if (ans === "N/A") na++;
         else empty++;
       }
     }
 
-    const denominator = ya + tidak; // exclude N/A and empty from denominator
-    const pct = denominator === 0 ? null : Math.round((ya / denominator) * 100);
+    // Default % logic for all modules
+    let denominator = ya + tidak; // exclude N/A and empty from denominator
+    
+    let countTidakAda = 0;
+    let pct = null;
+
+    if (module.slug === "sarana-proteksi") {
+       let proteksiYa = 0;
+       let proteksiSetengah = 0;
+       let proteksiTidakAda = 0;
+       for (const row of relevantRows) {
+         const ans = getAnswer(row, q.sheetHeader);
+         if (ans === "Ya") proteksiYa++;
+         if (ans === "Setengah") proteksiSetengah++;
+         if (ans === "Tidak") proteksiTidakAda++;
+       }
+       countTidakAda = proteksiTidakAda;
+       // The denominator for Sarana Proteksi % ONLY includes Ya and Kurang Baik (Setengah)
+       const d = proteksiYa + proteksiSetengah;
+       pct = d === 0 ? null : Math.round((proteksiYa / d) * 100);
+    } else if (module.slug === "hydrant") {
+       // Hydrant: hitung TidakAda terpisah untuk ditampilkan sebagai indikator ke-3
+       // Denominator = Ya + Tidak + TidakAda (semua masuk hitungan)
+       // % = Ya / (Ya + Tidak + TidakAda)
+       let hydrantTidakAda = 0;
+       for (const row of relevantRows) {
+         const ans = getAnswer(row, q.sheetHeader);
+         if (ans === "TidakAda") hydrantTidakAda++;
+       }
+       countTidakAda = hydrantTidakAda;
+       // denominator sudah termasuk TidakAda (dihitung sebagai tidak di loop atas)
+       pct = denominator === 0 ? null : Math.round((ya / denominator) * 100);
+    } else {
+       pct = denominator === 0 ? null : Math.round((ya / denominator) * 100);
+    }
 
     // Look up target percentage from masterTopik
     let targetPct = 90;
@@ -364,29 +428,51 @@ export function computeModuleAggregate(
       targetPct = parseInt(String(topikRow["Standar Minimum (%)"]), 10) || 90;
     }
 
-    // Look up description from masterPertanyaan
+    // ─── Lookup deskripsi dari masterPertanyaan ────────────────────────────
+    // Strategi multi-level:
+    // 1. Cocokkan isi dalam [...] dari sheetHeader dengan kolom Pertanyaan
+    // 2. Cocokkan label pertanyaan (q.label)
+    // 3. Cocokkan sebagian teks (contains) sebagai fallback terakhir
     let description = "";
-    
-    // Reproduce the same logic AppScript used to generate the default 'Pertanyaan' string
-    let expectedPertanyaan = q.sheetHeader;
-    const match = q.sheetHeader.match(/\[(.*?)\]/);
-    if (match) {
-      expectedPertanyaan = match[1];
-    } else {
-      const splitted = q.sheetHeader.split('-');
-      if (splitted.length > 1) {
-        expectedPertanyaan = splitted[1].trim();
+
+    if (masterPertanyaan.length > 0) {
+      // Ekstrak bagian dalam [...] dari sheetHeader sebagai kandidat "Pertanyaan"
+      const bracketMatch = q.sheetHeader.match(/\[(.*?)\]/);
+      const fromBracket = bracketMatch ? bracketMatch[1].trim() : "";
+
+      // Normalisasi: lowercase + ganti & jadi dan + hapus semua karakter selain huruf/angka
+      const norm = (s: string) => s.toLowerCase().replace(/&/g, "dan").replace(/[^a-z0-9]/g, "");
+
+      const topikNorm = norm(module.title);
+
+      const pertRow = masterPertanyaan.find((m) => {
+        const mTopikNorm = norm(m.Topik ?? "");
+        // Cocokkan topik: harus identik ATAU saling mengandung
+        if (mTopikNorm !== topikNorm && !mTopikNorm.includes(topikNorm) && !topikNorm.includes(mTopikNorm)) return false;
+
+        const pertNorm = norm(m.Pertanyaan ?? "");
+
+        // Strategi 1: isi bracket cocok persis
+        if (fromBracket && pertNorm === norm(fromBracket)) return true;
+
+        // Strategi 2: label pertanyaan cocok persis
+        if (norm(q.label) === pertNorm) return true;
+
+        // Strategi 3: sheetHeader mengandung nilai Pertanyaan (atau sebaliknya)
+        const headerNorm = norm(q.sheetHeader);
+        if (pertNorm && (headerNorm.includes(pertNorm) || pertNorm.includes(headerNorm))) return true;
+
+        // Strategi 4: label mengandung nilai Pertanyaan (atau sebaliknya) — fuzzy
+        if (pertNorm && (norm(q.label).includes(pertNorm) || pertNorm.includes(norm(q.label)))) return true;
+
+        return false;
+      });
+
+      if (pertRow && pertRow.Deskripsi && pertRow.Deskripsi !== "-") {
+        description = pertRow.Deskripsi.trim();
       }
     }
 
-    const pertRow = masterPertanyaan.find(
-      m => m.Topik?.trim().toLowerCase() === module.title.toLowerCase() && 
-           (m.Pertanyaan?.trim().toLowerCase() === expectedPertanyaan.toLowerCase() ||
-            m.Pertanyaan?.trim().toLowerCase() === q.label.toLowerCase())
-    );
-    if (pertRow && pertRow.Deskripsi && pertRow.Deskripsi !== "-") {
-      description = pertRow.Deskripsi;
-    }
 
     return {
       question: q,
@@ -394,10 +480,12 @@ export function computeModuleAggregate(
       pct,
       countYa: ya,
       countTidak: tidak,
+      countSetengah: setengah,
       countNA: na,
       countEmpty: empty,
       targetPct,
-      description
+      description,
+      countTidakAda
     };
   });
 
@@ -466,6 +554,15 @@ export function computeModuleAggregate(
       return { label: ef.label, value: raw, raw };
     });
 
+    let secondaryDescription = "";
+    let secondaryPhotoUrl = "";
+    if (module.secondaryDescriptionHeader) {
+      secondaryDescription = getField(row, module.secondaryDescriptionHeader);
+    }
+    if (module.secondaryPhotoHeader) {
+      secondaryPhotoUrl = getField(row, module.secondaryPhotoHeader);
+    }
+
     return {
       row,
       location: getDisplayLocation(row),
@@ -474,6 +571,8 @@ export function computeModuleAggregate(
       photoUrl,
       tags,
       extras,
+      secondaryDescription,
+      secondaryPhotoUrl,
     };
   });
 
@@ -513,13 +612,16 @@ export interface ModuleSummary {
   needsAttentionCount: number;
   /** Whether this is a log-only module (no % to show) */
   logOnly: boolean;
+  /** Standar minimum kepatuhan untuk topik ini (dari Master Topik) */
+  targetPct: number;
 }
 
 export function computeAllModuleSummaries(
   allModules: ModuleDef[],
   rowsThisMonth: PatroliRow[],
   rowsLastMonth: PatroliRow[],
-  masterData: any[] = []
+  masterData: any[] = [],
+  masterTopik: any[] = []
 ): ModuleSummary[] {
   return allModules.map((mod) => {
     const thisResult = computeModuleAggregate(mod, rowsThisMonth, masterData);
@@ -534,6 +636,15 @@ export function computeAllModuleSummaries(
       return total + sub.answers.filter((a) => a.jawaban === "Tidak").length;
     }, 0);
 
+    // Lookup standar minimum per topik dari masterTopik
+    let targetPct = 90; // default fallback
+    const topikRow = masterTopik.find(
+      (m) => m.Topik?.trim().toLowerCase() === mod.title.toLowerCase()
+    );
+    if (topikRow && topikRow["Standar Minimum (%)"]) {
+      targetPct = parseInt(String(topikRow["Standar Minimum (%)"]), 10) || 90;
+    }
+
     return {
       slug: mod.slug,
       title: mod.title,
@@ -545,6 +656,7 @@ export function computeAllModuleSummaries(
       submissionsThisMonth: thisResult.submissions.length,
       needsAttentionCount,
       logOnly: mod.logOnly ?? false,
+      targetPct,
     };
   });
 }
@@ -600,16 +712,25 @@ export function getRecentFindings(
 
 // ─── Status color helper ──────────────────────────────────────────────────────
 
-export function pctStatus(pct: number | null): "green" | "yellow" | "red" | "gray" {
+/**
+ * Status kepatuhan berdasarkan standar minimum per-topik.
+ * @param pct  Persentase kepatuhan aktual (null = belum ada data)
+ * @param targetPct  Standar minimum topik ini (default 90 jika tidak diketahui)
+ */
+export function pctStatus(
+  pct: number | null,
+  targetPct: number = 90
+): "green" | "yellow" | "red" | "gray" {
   if (pct === null) return "gray";
-  if (pct >= 90) return "green";
+  if (pct >= targetPct) return "green";
+  // Zona kuning: antara 70% dan standar minimum (batas bawah tetap 70)
   if (pct >= 70) return "yellow";
   return "red";
 }
 
-export function statusLabel(pct: number | null): string {
+export function statusLabel(pct: number | null, targetPct: number = 90): string {
   if (pct === null) return "Belum Ada Data";
-  if (pct >= 90) return "Patuh";
+  if (pct >= targetPct) return "Patuh";
   if (pct >= 70) return "Perlu Perbaikan";
   return "Tidak Patuh";
 }

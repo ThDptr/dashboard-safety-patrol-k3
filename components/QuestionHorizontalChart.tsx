@@ -20,8 +20,10 @@ interface QuestionResult {
   pct: number | null;
   countYa: number;
   countTidak: number;
+  countSetengah?: number;
   countNA: number;
   countEmpty: number;
+  countTidakAda?: number;
   targetPct?: number;
   description?: string;
 }
@@ -31,17 +33,32 @@ interface QuestionResult {
 
 export default function QuestionHorizontalChart({
   data,
+  moduleSlug,
 }: {
   data: QuestionResult[];
+  moduleSlug?: string;
 }) {
-  // Hanya tampilkan pertanyaan yang memiliki data persentase
   const chartData = useMemo(() => {
-    return data.map((q) => ({
-      name: q.label,
-      pct: q.pct === null ? 0 : q.pct, // Draw a 0 length bar or default to 0 for display
-      isNull: q.pct === null,
-      fullData: q
-    }));
+    return data.map((q) => {
+      const isNull = q.pct === null;
+      const achieve = q.pct ?? 0;
+      const target = q.targetPct ?? 90;
+      
+      const gap = isNull ? 0 : Math.max(0, target - achieve);
+      const remaining = isNull ? 0 : 100 - Math.max(achieve, target);
+      const noData = isNull ? 100 : 0;
+
+      return {
+        name: q.label,
+        achieve,
+        gap,
+        remaining,
+        noData,
+        isNull,
+        target,
+        fullData: q
+      };
+    });
   }, [data]);
 
   if (chartData.length === 0) {
@@ -61,6 +78,23 @@ export default function QuestionHorizontalChart({
     if (active && payload && payload.length) {
       const p = payload[0].payload.fullData;
       const description = p.description;
+      const isSaranaProteksi = moduleSlug === "sarana-proteksi";
+      const isHydrant = moduleSlug === "hydrant";
+      const isSaranaOrHydrant = isHydrant || isSaranaProteksi;
+      
+      let countIndikator2 = p.countTidak;
+      let countIndikator3 = p.countTidakAda ?? 0;
+      let labelIndikator2 = "✗ ";
+      let labelIndikator3 = "Tidak Ada: ";
+      
+      if (isHydrant) {
+        countIndikator2 = p.countTidak - countIndikator3;
+        labelIndikator3 = "🚒 Tidak ada hydrant: ";
+      } else if (isSaranaProteksi) {
+        countIndikator2 = p.countSetengah ?? 0;
+        labelIndikator2 = "⚠️ Kurang Baik: ";
+        labelIndikator3 = "✗ Tidak: ";
+      }
 
       return (
         <div className="bg-white p-3 border rounded shadow-lg text-sm max-w-[300px] z-50">
@@ -75,9 +109,18 @@ export default function QuestionHorizontalChart({
               {p.pct === null ? "Belum ada data" : `${p.pct}%`}
             </span>
           </p>
-          <div className="flex gap-3 mt-1 text-xs text-gray-500 dark:text-gray-400">
+          <div className="flex gap-3 mt-1 text-xs text-gray-500 dark:text-gray-400 flex-wrap">
             <span className="text-green-600 font-semibold">✓ {p.countYa}</span>
-            <span className="text-red-600 font-semibold">✗ {p.countTidak}</span>
+            
+            <span className={isSaranaProteksi ? "text-amber-600 font-semibold" : "text-red-600 font-semibold"}>
+              {labelIndikator2}{countIndikator2}
+            </span>
+            
+            {isSaranaOrHydrant && p.countTidakAda !== undefined && (
+              <span className={isHydrant ? "text-orange-600 dark:text-orange-400 font-semibold" : "text-red-800 dark:text-red-300 font-semibold"}>
+                {labelIndikator3}{countIndikator3}
+              </span>
+            )}
             <span className="text-gray-400">N/A {p.countNA}</span>
           </div>
         </div>
@@ -171,24 +214,72 @@ export default function QuestionHorizontalChart({
             />
             <Tooltip content={<CustomTooltip />} cursor={{ fill: '#F3F4F6' }} />
             <ReferenceLine x={globalTargetPct} stroke="#9CA3AF" strokeDasharray="4 4" />
-            <Bar dataKey="pct" radius={[0, 4, 4, 0]} barSize={20} isAnimationActive={false}>
-              {chartData.map((entry, index) => {
-                const target = entry.fullData.targetPct ?? 90;
-                return (
-                  <Cell
-                    key={`cell-${index}`}
-                    fill={entry.isNull ? "#9CA3AF" : ((entry.pct ?? 0) >= target ? "#199e70" : "#d03b3b")}
-                  />
-                );
-              })}
+            
+            {/* 1. Pencapaian Nyata (Hijau) */}
+            <Bar dataKey="achieve" stackId="a" fill="#199e70" barSize={25} isAnimationActive={false}>
               <LabelList
-                dataKey="pct"
+                dataKey="achieve"
                 content={(props: any) => {
-                  const { x, y, width, height, value, index } = props;
-                  const item = chartData[index];
+                  const { x, y, width, height, value } = props;
+                  if (!value || value <= 0) return null;
                   return (
-                    <text x={x + width + 10} y={y + height / 2 + 4} fill="#4B5563" fontSize="12" fontWeight="bold">
-                      {item?.isNull ? "-" : `${value}%`}
+                    <text
+                      x={x + Math.max(width - 5, width / 2)}
+                      y={y + height / 2 + 4}
+                      fill="#fff"
+                      fontSize="11"
+                      fontWeight="bold"
+                      textAnchor={width > 25 ? "end" : "middle"}
+                    >
+                      {value}%
+                    </text>
+                  );
+                }}
+              />
+            </Bar>
+            
+            {/* 2. Jarak ke Standar (Kuning) */}
+            <Bar dataKey="gap" stackId="a" fill="#FBBF24" isAnimationActive={false}>
+              <LabelList
+                dataKey="gap"
+                content={(props: any) => {
+                  const { x, y, width, height, value } = props;
+                  if (!value || value <= 0) return null;
+                  return (
+                    <text x={x + width / 2} y={y + height / 2 + 4} fill="#000" fontSize="11" fontWeight="bold" textAnchor="middle">
+                      {value}%
+                    </text>
+                  );
+                }}
+              />
+            </Bar>
+            
+            {/* 3. Lawan ke 100% / Di Luar Target (Merah) */}
+            <Bar dataKey="remaining" stackId="a" fill="#d03b3b" isAnimationActive={false}>
+              <LabelList
+                dataKey="remaining"
+                content={(props: any) => {
+                  const { x, y, width, height, value } = props;
+                  if (!value || value <= 0) return null;
+                  return (
+                    <text x={x + width / 2} y={y + height / 2 + 4} fill="#fff" fontSize="11" fontWeight="bold" textAnchor="middle">
+                      {value}%
+                    </text>
+                  );
+                }}
+              />
+            </Bar>
+
+            {/* 4. State kosong / Belum ada data */}
+            <Bar dataKey="noData" stackId="a" fill="#9CA3AF" isAnimationActive={false}>
+              <LabelList
+                dataKey="noData"
+                content={(props: any) => {
+                  const { x, y, width, height, value } = props;
+                  if (!value || value <= 0) return null;
+                  return (
+                    <text x={x + width / 2} y={y + height / 2 + 4} fill="#fff" fontSize="11" fontWeight="bold" textAnchor="middle">
+                      Belum ada data
                     </text>
                   );
                 }}
@@ -202,11 +293,15 @@ export default function QuestionHorizontalChart({
       <div className="mt-6 flex flex-wrap items-center gap-6 text-xs text-gray-600 dark:text-gray-400 border-t border-gray-100 dark:border-slate-800 pt-4">
         <div className="flex items-center gap-2">
           <div className="w-3 h-3 rounded-sm" style={{ backgroundColor: "#199e70" }}></div>
-          <span className="font-medium">Memenuhi standar (≥ {globalTargetPct}%)</span>
+          <span className="font-medium">Pencapaian Nyata [H]</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="w-3 h-3 rounded-sm" style={{ backgroundColor: "#FBBF24" }}></div>
+          <span className="font-medium">Jarak ke Standar [K]</span>
         </div>
         <div className="flex items-center gap-2">
           <div className="w-3 h-3 rounded-sm" style={{ backgroundColor: "#d03b3b" }}></div>
-          <span className="font-medium">Di bawah standar (&lt; {globalTargetPct}%)</span>
+          <span className="font-medium">Di Luar Target [M]</span>
         </div>
         <div className="flex items-center gap-2">
           <div className="w-5 border-t-2 border-dashed border-gray-400"></div>

@@ -42,12 +42,18 @@ export async function GET(request: Request) {
     let masterPertanyaan: any[] = [];
     
     try {
+      let targetMaster = "ruangan";
+      if (mode === "module") {
+         if (moduleSlug === "pcra") targetMaster = "pcra";
+         else if (moduleSlug === "luar-gedung") targetMaster = "luar";
+      }
+
       // Fetch both data sources concurrently to cut loading time in half
       const [patrolRes, masterRes, topikRes, pertanyaanRes] = await Promise.allSettled([
         fetchPatrolData(),
-        fetchMasterData("ruangan"),
-        fetchMasterData("topik"),
-        fetchMasterData("pertanyaan")
+        fetchMasterData(targetMaster, bulan),
+        fetchMasterData("topik", bulan),
+        fetchMasterData("pertanyaan", bulan)
       ]);
       
       if (patrolRes.status === "fulfilled") {
@@ -82,7 +88,8 @@ export async function GET(request: Request) {
         MODULES,
         rowsThisMonth,
         rowsLastMonth,
-        masterData
+        masterData,
+        masterTopik
       );
       const recentFindings = getRecentFindings(MODULES, rowsThisMonth, 5);
       const needsAttention = getNeedsAttention(MODULES, rowsThisMonth);
@@ -116,24 +123,40 @@ export async function GET(request: Request) {
 
       const aggregate = computeModuleAggregate(selectedModule, rows, masterData, masterTopik, masterPertanyaan);
 
-      // --- Calculate Trend Data ---
-      const groupedByMonth: Record<string, typeof rows> = {};
-      rows.forEach(r => {
-        const d = parseWIBDate(r.tanggalPemantauan || r.timestamp);
-        const y = d.getUTCFullYear();
-        const mo = String(d.getUTCMonth() + 1).padStart(2, "0");
-        const monthStr = `${y}-${mo}`;
-        if (!groupedByMonth[monthStr]) groupedByMonth[monthStr] = [];
-        groupedByMonth[monthStr].push(r);
-      });
+      // --- Calculate Trend Data (optimized: current + prev month only) ---
+      let trendData: { month: string; pct: number | null }[] = [];
+      
+      if (!startDate && !endDate) {
+        // Normal month filter: compute trend for current + previous month
+        const prevBulan = getPrevBulan(bulan);
+        const prevRows = filterByBulan(allRows, prevBulan);
+        const prevFiltered = ruangan ? filterByRuangan(prevRows, ruangan) : prevRows;
+        
+        const prevAgg = prevFiltered.length > 0
+          ? computeModuleAggregate(selectedModule, prevFiltered, masterData)
+          : null;
 
-      const trendData = Object.keys(groupedByMonth).sort().map(monthStr => {
-        const agg = computeModuleAggregate(selectedModule, groupedByMonth[monthStr], masterData);
-        return {
-          month: monthStr,
-          pct: agg.totalPct
-        };
-      });
+        if (prevAgg && prevAgg.totalPct !== null) {
+          trendData.push({ month: prevBulan, pct: prevAgg.totalPct });
+        }
+        trendData.push({ month: bulan, pct: aggregate.totalPct });
+      } else {
+        // Date range filter: group by month within the range
+        const groupedByMonth: Record<string, typeof rows> = {};
+        rows.forEach(r => {
+          const d = parseWIBDate(r.tanggalPemantauan || r.timestamp);
+          const y = d.getUTCFullYear();
+          const mo = String(d.getUTCMonth() + 1).padStart(2, "0");
+          const monthStr = `${y}-${mo}`;
+          if (!groupedByMonth[monthStr]) groupedByMonth[monthStr] = [];
+          groupedByMonth[monthStr].push(r);
+        });
+
+        trendData = Object.keys(groupedByMonth).sort().map(monthStr => {
+          const agg = computeModuleAggregate(selectedModule, groupedByMonth[monthStr], masterData);
+          return { month: monthStr, pct: agg.totalPct };
+        });
+      }
 
       // Build serializable submissions (without circular refs)
       const submissions = aggregate.submissions.map((s) => ({
@@ -150,6 +173,8 @@ export async function GET(request: Request) {
         })),
         description: s.description,
         photoUrl: s.photoUrl,
+        secondaryDescription: s.secondaryDescription,
+        secondaryPhotoUrl: s.secondaryPhotoUrl,
         tags: s.tags,
         extras: s.extras,
       }));
@@ -175,6 +200,8 @@ export async function GET(request: Request) {
           countEmpty: r.countEmpty,
           targetPct: r.targetPct,
           description: r.description,
+          countTidakAda: r.countTidakAda,
+          countSetengah: r.countSetengah,
         })),
         submissions,
         submissionCount: submissions.length,
@@ -196,37 +223,33 @@ export async function GET(request: Request) {
       const { rowMatchesModule, computeModuleAggregate } = await import("@/lib/analytics");
       const { getField, getDisplayLocation } = await import("@/lib/google-sheets");
 
-      rows.forEach((row) => {
-        // Find ALL modules this row belongs to
-        const matchedModules = MODULES.filter((m) => rowMatchesModule(row, m));
-        
-        matchedModules.forEach((matchedModule) => {
-          // Use computeModuleAggregate to get properly formatted tags, description, and photo
-          const aggregate = computeModuleAggregate(matchedModule, [row]);
-          if (aggregate.submissions.length === 0) return;
+      MODULES.forEach((matchedModule) => {
+        // 1. Get all rows matching this module
+        const relevantRows = rows.filter((row) => rowMatchesModule(row, matchedModule));
+        if (relevantRows.length === 0) return;
 
-          const sub = aggregate.submissions[0];
-          
+        // 2. Compute aggregate ONCE for this module with all its rows
+        const aggregate = computeModuleAggregate(matchedModule, relevantRows);
+
+        // 3. Process the resulting submissions
+        aggregate.submissions.forEach((sub) => {
           let fullDescription = sub.description || "";
           if (!fullDescription) {
-            const fallbackDesc = getField(row, "Deskripsi Temuan - Keluhan") || getField(row, "Keluhan");
+            const fallbackDesc = getField(sub.row, "Deskripsi Temuan - Keluhan") || getField(sub.row, "Keluhan");
             if (fallbackDesc) fullDescription = fallbackDesc;
           }
 
           let photoUrl = sub.photoUrl || "";
           if (!photoUrl) {
-            // If the form uses a generic photo upload field named similarly
-            const fallbackPhoto = getField(row, "Foto Temuan - Keluhan") || getField(row, "Upload Foto");
+            const fallbackPhoto = getField(sub.row, "Foto Temuan - Keluhan") || getField(sub.row, "Upload Foto");
             if (fallbackPhoto) photoUrl = fallbackPhoto;
           }
           
-          // Include tags if present
           if (sub.tags && sub.tags.length > 0) {
             let tagPrefix = "";
             const isApd = matchedModule.slug === "apd";
             
             if (isApd) {
-              // Group duplicate tags to count them
               const counts: Record<string, number> = {};
               sub.tags.forEach(t => counts[t] = (counts[t] || 0) + 1);
               const formattedTags = Object.entries(counts).map(([prof, count]) => `${count} ${prof}`);
@@ -234,16 +257,15 @@ export async function GET(request: Request) {
             } else {
               tagPrefix = `[Sub-unit bermasalah: ${sub.tags.join(", ")}]\n`;
             }
-            
             fullDescription = tagPrefix + fullDescription;
           }
 
           if (fullDescription || photoUrl) {
             temuanList.push({
-              id: row.timestamp + "-" + matchedModule.slug, // make ID unique per module
-              timestamp: row.timestamp,
-              tanggalPemantauan: row.tanggalPemantauan || row.timestamp,
-              location: getDisplayLocation(row),
+              id: sub.row.timestamp + "-" + matchedModule.slug,
+              timestamp: sub.row.timestamp,
+              tanggalPemantauan: sub.row.tanggalPemantauan || sub.row.timestamp,
+              location: getDisplayLocation(sub.row),
               description: fullDescription.trim(),
               photoUrl: photoUrl,
               moduleTitle: matchedModule.title,

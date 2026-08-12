@@ -3,7 +3,7 @@
 // Dashboard Patroli Kesling & K3 RSOMH
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type Jawaban = "Ya" | "Tidak" | "N/A" | "Setengah" | "";
+export type Jawaban = "Ya" | "Tidak" | "N/A" | "Setengah" | "TidakAda" | "";
 
 /** Raw row from the Web App — keys are exact column headers */
 export type RawRow = Record<string, string>;
@@ -19,6 +19,11 @@ export interface WebAppResponse {
 export interface PatroliRow {
   /** Original raw row (all columns) */
   raw: RawRow;
+  /**
+   * Normalized key index: maps trimmed-lowercase key → original value.
+   * Used by getAnswer/getField to tolerate trailing/leading spaces in column headers.
+   */
+  _normIdx: Map<string, string>;
   timestamp: string;
   tanggalPemantauan: string;
   namaPetugas: string;
@@ -35,13 +40,39 @@ const WEBAPP_URL = process.env.GOOGLE_SHEETS_WEBAPP_URL!;
 const globalForCache = globalThis as unknown as {
   _patrolCache?: { data: PatroliRow[]; fetchedAt: number };
   _masterCache?: Map<string, { data: any[]; fetchedAt: number }>;
+  _patrolInflight?: Promise<PatroliRow[]> | null;
+  _masterInflight?: Map<string, Promise<any[]>>;
 };
 
-const CACHE_TTL_MS = 300_000; // 5 minutes
+const CACHE_TTL_MS = 120_000; // 2 minutes — patrol data
+
+/**
+ * Helper to fetch with exponential backoff for Google Apps Script
+ */
+export async function fetchWithRetry(url: string, options: RequestInit, retries = 3): Promise<Response> {
+  let lastError: Error | null = null;
+  for (let i = 0; i < retries; i++) {
+    try {
+      const res = await fetch(url, options);
+      if (res.ok) return res;
+      if (res.status === 404) return res; // Don't retry 404s
+      
+      const text = await res.text().catch(() => "");
+      lastError = new Error(`HTTP ${res.status}: ${text.slice(0, 100)}`);
+    } catch (e: any) {
+      lastError = e;
+    }
+    // Exponential backoff: 1s, 2s, 4s...
+    if (i < retries - 1) {
+      await new Promise(r => setTimeout(r, Math.pow(2, i) * 1000));
+    }
+  }
+  throw lastError || new Error("Fetch failed after retries");
+}
 
 /**
  * Fetch patrol data from the Apps Script Web App.
- * Uses an in-memory cache with 5-minute TTL.
+ * Uses an in-memory cache with 10-second TTL.
  * This function is safe to call from Next.js API routes (server-side only).
  */
 export async function fetchPatrolData(): Promise<PatroliRow[]> {
@@ -52,73 +83,108 @@ export async function fetchPatrolData(): Promise<PatroliRow[]> {
     return cache.data;
   }
 
+  // In-flight deduplication: if another caller is already fetching, reuse its promise
+  if (globalForCache._patrolInflight) {
+    return globalForCache._patrolInflight;
+  }
+
   if (!WEBAPP_URL) {
     throw new Error(
       "GOOGLE_SHEETS_WEBAPP_URL is not set. Please add it to .env.local."
     );
   }
 
-  const res = await fetch(WEBAPP_URL, {
-    // Next.js 14 fetch cache with revalidate
-    next: { revalidate: 60 },
-    headers: { Accept: "application/json" },
-  });
+  const doFetch = async (): Promise<PatroliRow[]> => {
+    try {
+      const res = await fetchWithRetry(WEBAPP_URL, {
+        next: { revalidate: 120, tags: ['patrol-data'] },
+        headers: { Accept: "application/json" },
+      });
 
-  if (!res.ok) {
-    throw new Error(
-      `Web App returned HTTP ${res.status}: ${await res.text().then((t) => t.slice(0, 200))}`
-    );
-  }
+      if (!res.ok) {
+        throw new Error(
+          `Web App returned HTTP ${res.status}: ${await res.text().then((t) => t.slice(0, 200))}`
+        );
+      }
 
-  const json: WebAppResponse = await res.json();
+      const json: WebAppResponse = await res.json();
+      const rows = normalizeRows(json);
+      globalForCache._patrolCache = { data: rows, fetchedAt: Date.now() };
+      return rows;
+    } finally {
+      globalForCache._patrolInflight = null;
+    }
+  };
 
-  const rows = normalizeRows(json);
-  globalForCache._patrolCache = { data: rows, fetchedAt: now };
-  return rows;
+  globalForCache._patrolInflight = doFetch();
+  return globalForCache._patrolInflight;
 }
 
-const MASTER_CACHE_TTL_MS = 3_600_000; // 1 hour
+const MASTER_CACHE_TTL_MS = 300_000; // 5 minutes — master data changes rarely
 
 if (!globalForCache._masterCache) {
   globalForCache._masterCache = new Map<string, { data: any[], fetchedAt: number }>();
 }
+if (!globalForCache._masterInflight) {
+  globalForCache._masterInflight = new Map<string, Promise<any[]>>();
+}
 
-export async function fetchMasterData(target: string): Promise<any[]> {
+export async function fetchMasterData(target: string, bulan?: string): Promise<any[]> {
   const now = Date.now();
-  const cached = globalForCache._masterCache!.get(target);
+  const cacheKey = bulan ? `${target}-${bulan}` : target;
+  const cached = globalForCache._masterCache!.get(cacheKey);
 
   if (cached && now - cached.fetchedAt < MASTER_CACHE_TTL_MS) {
     return cached.data;
+  }
+
+  // In-flight deduplication
+  const inflight = globalForCache._masterInflight!.get(cacheKey);
+  if (inflight) {
+    return inflight;
   }
 
   if (!WEBAPP_URL) {
     throw new Error("GOOGLE_SHEETS_WEBAPP_URL is not set.");
   }
 
-  const SECRET = process.env.CRUD_SECRET || "rahasia_rsomh_k3";
-  const payload = { action: "read", target: target, secret: SECRET, token: SECRET };
-  
-  const url = new URL(WEBAPP_URL);
-  for (const key in payload) {
-    url.searchParams.append(key, payload[key as keyof typeof payload].toString());
-  }
+  const doFetch = async (): Promise<any[]> => {
+    try {
+      const SECRET = process.env.CRUD_SECRET || "rahasia_rsomh_k3";
+      const payload: any = { action: "read", target: target, secret: SECRET, token: SECRET };
+      if (bulan) {
+        payload.bulan = bulan;
+      }
+      
+      const url = new URL(WEBAPP_URL);
+      for (const key in payload) {
+        url.searchParams.append(key, payload[key as keyof typeof payload].toString());
+      }
 
-  const res = await fetch(url.toString(), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-    next: { revalidate: 300, tags: ['master-data', `master-${target}`] }
-  });
+      const res = await fetchWithRetry(url.toString(), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        next: { revalidate: 300, tags: ['master-data', `master-${target}`, `master-${cacheKey}`] }
+      });
 
-  if (!res.ok) {
-    throw new Error(`Master fetch failed: ${res.status}`);
-  }
+      if (!res.ok) {
+        throw new Error(`Master fetch failed: ${res.status}`);
+      }
 
-  const json = await res.json();
-  const rows = json.data || [];
-  
-  globalForCache._masterCache!.set(target, { data: rows, fetchedAt: now });
-  return rows;
+      const json = await res.json();
+      const rows = json.data || [];
+      
+      globalForCache._masterCache!.set(cacheKey, { data: rows, fetchedAt: Date.now() });
+      return rows;
+    } finally {
+      globalForCache._masterInflight!.delete(cacheKey);
+    }
+  };
+
+  const promise = doFetch();
+  globalForCache._masterInflight!.set(cacheKey, promise);
+  return promise;
 }
 
 export function invalidateMasterCache(target: string) {
@@ -127,35 +193,72 @@ export function invalidateMasterCache(target: string) {
   }
 }
 
-// ─── Normalization ────────────────────────────────────────────────────────────
+// ─── Key normalization helper ───────────────────────────────────────────
+
+/**
+ * Normalize a sheet column header for fuzzy matching:
+ * - trim leading/trailing whitespace
+ * - collapse multiple consecutive spaces into one
+ * - lowercase
+ * This handles Google Sheet headers that have double spaces (e.g. "APAR  [APAR - ...]").
+ */
+function normalizeKey(key: string): string {
+  return key.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+// ─── Normalization ─────────────────────────────────────────────────────────────
 
 function normalizeRows(json: WebAppResponse): PatroliRow[] {
-  return json.data.map((row) => ({
-    raw: row,
-    timestamp: row["Timestamp"] ?? "",
-    tanggalPemantauan: row["Tanggal Pemantauan"] ?? "",
-    namaPetugas: row["Nama Petugas"] ?? "",
-    jenisPemantauan: row["Jenis Pemantauan"] ?? "",
-    ruangan: row["Ruangan"] ?? "",
-    frekuensiPemantauan: row["Frekuensi Pemantauan"] ?? "",
-    patroliKe: parseInt(row["Patroli ke-"] ?? "0", 10) || 0,
-  }));
+  return json.data.map((row) => {
+    // Build normalized index: collapsed-lowercase key → value
+    // This tolerates trailing/leading spaces AND multiple consecutive spaces
+    // in Google Sheet column headers (e.g. "APAR  [APAR - Terjangkau]" with 2 spaces)
+    const _normIdx = new Map<string, string>();
+    for (const [k, v] of Object.entries(row)) {
+      _normIdx.set(normalizeKey(k), v == null ? "" : String(v));
+    }
+
+    const get = (key: string) => row[key] ?? row[key.trim()] ?? "";
+
+    return {
+      raw: row,
+      _normIdx,
+      timestamp: get("Timestamp"),
+      tanggalPemantauan: get("Tanggal Pemantauan"),
+      namaPetugas: get("Nama Petugas"),
+      jenisPemantauan: String(get("Jenis Pemantauan")).trim(),
+      ruangan: String(get("Ruangan")).trim(),
+      frekuensiPemantauan: String(get("Frekuensi Pemantauan")).trim(),
+      patroliKe: parseInt(String(get("Patroli ke-") ?? "0"), 10) || 0,
+    };
+  });
 }
 
 // ─── Field accessors ──────────────────────────────────────────────────────────
 
 /**
  * Get the standardized answer from a row based on sheet header.
- * Safely coerces value to string first (Web App may return numbers or null).
+ * Uses exact match first, then falls back to normalized key lookup
+ * (trim + collapse spaces + lowercase) to tolerate Google Sheet header quirks.
  */
 export function getAnswer(row: PatroliRow, sheetHeader: string): Jawaban {
-  const raw = row.raw[sheetHeader];
-  const val = raw == null ? "" : String(raw).trim();
+  // Try exact key first
+  let rawVal: any = row.raw[sheetHeader];
+
+  // Fallback: normalized lookup (trim + collapse spaces + lowercase)
+  if (rawVal == null) {
+    rawVal = row._normIdx.get(normalizeKey(sheetHeader)) ?? null;
+  }
+
+  const val = rawVal == null ? "" : String(rawVal).trim();
   
   if (val === "Ya") return "Ya";
   if (val === "Tidak") return "Tidak";
   if (val === "N/A") return "N/A";
   
+  // Hydrant: "Tidak ada hydrant" → kategori ketiga, masuk denominator tapi bukan Ya
+  if (val === "Tidak ada hydrant") return "TidakAda";
+
   // Specific to Sarana Proteksi Kebakaran
   if (val === "Ya, kondisi baik/utuh") return "Ya";
   if (val === "Ya, tapi kondisi tidak baik/tidak utuh") return "Setengah";
@@ -166,11 +269,18 @@ export function getAnswer(row: PatroliRow, sheetHeader: string): Jawaban {
 
 /**
  * Get a string field value from a row.
- * Safely coerces value to string first.
+ * Uses exact match first, then falls back to normalized key lookup.
  */
 export function getField(row: PatroliRow, sheetHeader: string): string {
-  const raw = row.raw[sheetHeader];
-  return raw == null ? "" : String(raw).trim();
+  // Try exact key first
+  let rawVal: any = row.raw[sheetHeader];
+
+  // Fallback: normalized lookup
+  if (rawVal == null) {
+    rawVal = row._normIdx.get(normalizeKey(sheetHeader)) ?? null;
+  }
+
+  return rawVal == null ? "" : String(rawVal).trim();
 }
 
 /**

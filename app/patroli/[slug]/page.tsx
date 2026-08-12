@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback, Suspense, useMemo, Fragment } from "react";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { useState, useEffect, useCallback, Suspense, useMemo, Fragment, useRef } from "react";
+import LockMonthButton from "@/components/LockMonthButton";
+import { useParams, useRouter, useSearchParams, usePathname } from "next/navigation";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { MODULE_BY_SLUG } from "@/lib/modules";
@@ -42,6 +43,8 @@ interface QuestionResult {
   countTidak: number;
   countNA: number;
   countEmpty: number;
+  countTidakAda?: number;
+  countSetengah?: number;
 }
 
 interface AnswerItem {
@@ -111,6 +114,7 @@ function PatroliDetailContent() {
   const params = useParams();
   const router = useRouter();
   const searchParams = useSearchParams();
+  const pathname = usePathname();
 
   const slug = Array.isArray(params.slug) ? params.slug[0] : params.slug ?? "";
   const moduleDef = MODULE_BY_SLUG[slug];
@@ -118,8 +122,9 @@ function PatroliDetailContent() {
   const queryBulan = searchParams.get("bulan");
   const queryRuangan = searchParams.get("ruangan");
 
-  const [bulan, setBulanState] = useState(queryBulan || getCurrentBulan());
-  const [ruangan, setRuanganState] = useState(queryRuangan || "");
+  // Use searchParams as source of truth — no double-sync needed
+  const bulan = queryBulan || getCurrentBulan();
+  const ruangan = queryRuangan || "";
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [data, setData] = useState<ModuleData | null>(null);
@@ -134,6 +139,9 @@ function PatroliDetailContent() {
   const [activeB3Tab, setActiveB3Tab] = useState<"a" | "b" | "c">("a");
   const [activeElektrikTab, setActiveElektrikTab] = useState<"a" | "b">("a");
   const [keteranganPopup, setKeteranganPopup] = useState<string | null>(null);
+
+  // AbortController ref to cancel stale fetches
+  const abortRef = useRef<AbortController | null>(null);
 
   const [pcraTopics, setPcraTopics] = useState<PcraTopic[]>([]);
   const [activePcraTopicId, setActivePcraTopicId] = useState<string>("all");
@@ -298,20 +306,20 @@ function PatroliDetailContent() {
   };
 
   // Helper: build full keterangan string for a single patrol submission
-  const buildPatrolKeterangan = (p: any, masterProfesiNames: string[] = []): string | null => {
+  const buildPatrolKeterangan = (p: any, allowedTags: string[] = [], useSecondary: boolean = false): string | null => {
     const parts: string[] = [];
 
     // 1. Text description from sheet
-    const desc = p?.description;
+    const desc = useSecondary ? p?.secondaryDescription : p?.description;
     if (typeof desc === 'string' && desc.trim() !== "" && desc !== "-") {
       parts.push(desc.trim());
     }
 
     // 2. APD profession violations from tags
     if (p?.tags && Array.isArray(p.tags) && p.tags.length > 0) {
-      // Only include tags that are profession names (in masterProfesiNames)
-      const profTags = masterProfesiNames.length > 0
-        ? p.tags.filter((t: string) => masterProfesiNames.includes(t.toLowerCase()))
+      // Only include tags that are profession names (in allowedTags)
+      const profTags = allowedTags.length > 0
+        ? p.tags.filter((t: string) => allowedTags.includes(t.toLowerCase()))
         : p.tags;
 
       if (profTags.length > 0) {
@@ -324,9 +332,9 @@ function PatroliDetailContent() {
     }
 
     // 3. Photo URL
-    const photoUrl = p?.photoUrl;
-    if (typeof photoUrl === 'string' && photoUrl.trim() !== "") {
-      parts.push(`📷 ${photoUrl.trim()}`);
+    const photo = useSecondary ? p?.secondaryPhotoUrl : p?.photoUrl;
+    if (typeof photo === 'string' && photo.trim() !== "") {
+      parts.push(`📷 ${photo.trim()}`);
     }
 
     return parts.length > 0 ? parts.join(" | ") : null;
@@ -380,11 +388,10 @@ function PatroliDetailContent() {
 
       let top10 = roomPatrols.slice(-10);
 
-      // Filter out profession violations from physical room's tag length
+      // Filter tags: ONLY "perawat" violations reduce the physical room's compliance
       top10 = top10.map(p => {
         let pTags = p.tags ? [...p.tags] : [];
-        const masterProfesiNames = masterProfesi.map(mp => (mp.Ruangan || "").substring(2).trim().toLowerCase());
-        pTags = pTags.filter(t => !masterProfesiNames.includes(t.toLowerCase()));
+        pTags = pTags.filter(t => t.toLowerCase().includes("perawat"));
         return { ...p, tags: pTags };
       });
 
@@ -435,8 +442,15 @@ function PatroliDetailContent() {
           const matchCount = (p.tags || []).filter((t: string) => t.toLowerCase() === namaProfesi.toLowerCase()).length;
           if (matchCount > 0) {
             sumViolations += matchCount;
-            const ketText = buildPatrolKeterangan(p, [namaProfesi.toLowerCase()]);
-            if (ketText) allKeterangan.push({ slot: i, desc: ketText });
+            
+            // Build description indicating which room the violation occurred in
+            const locationStr = p.location ? ` di ${p.location}` : "";
+            const profStr = `[Tidak patuh: ${matchCount} ${namaProfesi}]${locationStr}`;
+            const parts = [profStr];
+            if (p.description && typeof p.description === 'string' && p.description.trim() !== "" && p.description !== "-") parts.push(p.description.trim());
+            if (p.photoUrl) parts.push(`📷 ${p.photoUrl}`);
+            allKeterangan.push({ slot: i, desc: parts.join(" | ") });
+            
             if (p.namaPetugas) allPetugas.push(p.namaPetugas);
             const pTime = new Date(p.tanggalPemantauan || p.timestamp).getTime();
             if (pTime > latestDate) latestDate = pTime;
@@ -446,7 +460,9 @@ function PatroliDetailContent() {
         if (patrolsInSlot.length > 0) {
           top10.push({
             tags: new Array(sumViolations).fill("violation"),
-            answers: [] // No ketersediaan for professions
+            answers: [
+              { label: "Kepatuhan menggunakan APD", jawaban: sumViolations > 0 ? "Tidak" : "Ya" }
+            ]
           });
         } else {
           top10.push(null);
@@ -519,9 +535,17 @@ function PatroliDetailContent() {
       const top2 = roomPatrols.slice(-2);
       const latestPatrol = top2.length > 0 ? top2[top2.length - 1] : null;
 
-      const keterangan = top2
+      const keteranganA = top2
         .map((p, idx) => {
-          const ket = buildPatrolKeterangan(p);
+          const ket = buildPatrolKeterangan(p, [], false);
+          return ket ? `P${idx + 1}: ${ket}` : null;
+        })
+        .filter(Boolean)
+        .join(" ; ") || "-";
+
+      const keteranganC = top2
+        .map((p, idx) => {
+          const ket = buildPatrolKeterangan(p, [], true);
           return ket ? `P${idx + 1}: ${ket}` : null;
         })
         .filter(Boolean)
@@ -547,7 +571,8 @@ function PatroliDetailContent() {
         terlihatLemari,
         eyewasher,
         bodywasher,
-        keterangan,
+        keteranganA,
+        keteranganC,
         patrols: top2,
       };
     }).filter(d => d.patrols.length > 0);
@@ -557,7 +582,7 @@ function PatroliDetailContent() {
     if (slug !== "apd" || !reportData.length) return null;
 
     const summary = Array(10).fill(null).map(() => ({
-      ya: 0, tidak: 0, na: 0, totalPct: 0, validPctCount: 0
+      ya: 0, tidak: 0, na: 0, totalCompliant: 0, totalKaryawan: 0
     }));
 
     reportData.forEach(row => {
@@ -572,11 +597,18 @@ function PatroliDetailContent() {
           }
         } else {
           if (row.jumlahKaryawan > 0) {
-            const nonCompliantCount = (p.tags || []).filter((t: string) => t.trim() !== "").length;
-            let compliant = row.jumlahKaryawan - nonCompliantCount;
-            if (compliant < 0) compliant = 0;
-            summary[colIdx].totalPct += compliant;
-            summary[colIdx].validPctCount++;
+            const ansObj = p.answers.find((a: any) => a.label.includes("menggunakan APD") || a.label.includes("Kepatuhan"));
+            if (ansObj && ansObj.jawaban !== "-" && ansObj.jawaban !== "N/A") {
+              let nonCompliantCount = 0;
+              if (ansObj.jawaban === "Tidak") {
+                const tagsCount = (p.tags || []).filter((t: string) => t.trim() !== "").length;
+                nonCompliantCount = tagsCount > 0 ? tagsCount : 1;
+              }
+              let compliant = row.jumlahKaryawan - nonCompliantCount;
+              if (compliant < 0) compliant = 0;
+              summary[colIdx].totalCompliant += compliant;
+              summary[colIdx].totalKaryawan += row.jumlahKaryawan;
+            }
           }
         }
       });
@@ -612,7 +644,7 @@ function PatroliDetailContent() {
           const answerObj1 = p.answers.find((a: any) => a.label.includes(h1.split(" ")[0]));
           if (answerObj1) {
             const ans = answerObj1.jawaban;
-            if (ans !== "-" && ans !== "N/A") {
+            if (ans !== "-" && ans !== "N/A" && ans !== "") {
               const expected = getExpected(row, h1);
               if (ans === "Ya") {
                 summary[colIdx].ya += expected;
@@ -629,7 +661,7 @@ function PatroliDetailContent() {
           const answerObj2 = p.answers.find((a: any) => a.label.includes(h2.split(" ")[0]));
           if (answerObj2) {
             const ans = answerObj2.jawaban;
-            if (ans !== "-" && ans !== "N/A") {
+            if (ans !== "-" && ans !== "N/A" && ans !== "") {
               const expected = getExpected(row, h2);
               if (ans === "Ya") {
                 summary[2 + colIdx].ya += expected;
@@ -657,11 +689,18 @@ function PatroliDetailContent() {
     reportData.forEach(row => {
       row.patrols.forEach(p => {
         if (p && row.jumlahKaryawan > 0) {
-          const nonCompliantCount = (p.tags || []).filter((t: string) => t.trim() !== "").length;
-          let compliant = row.jumlahKaryawan - nonCompliantCount;
-          if (compliant < 0) compliant = 0;
-          totalPatuh += compliant;
-          totalSeharusnya += row.jumlahKaryawan;
+          const ansObj = p.answers.find((a: any) => a.label.includes("menggunakan APD") || a.label.includes("Kepatuhan"));
+          if (ansObj && ansObj.jawaban !== "-" && ansObj.jawaban !== "N/A") {
+            let nonCompliantCount = 0;
+            if (ansObj.jawaban === "Tidak") {
+              const tagsCount = (p.tags || []).filter((t: string) => t.trim() !== "").length;
+              nonCompliantCount = tagsCount > 0 ? tagsCount : 1;
+            }
+            let compliant = row.jumlahKaryawan - nonCompliantCount;
+            if (compliant < 0) compliant = 0;
+            totalPatuh += compliant;
+            totalSeharusnya += row.jumlahKaryawan;
+          }
         }
       });
     });
@@ -711,7 +750,7 @@ function PatroliDetailContent() {
               const answerObj = p.answers.find((a: any) => a.label.includes(lblToMatch));
               const ans = answerObj ? answerObj.jawaban : "-";
 
-              if (ans !== "-" && ans !== "N/A") {
+              if (ans !== "-" && ans !== "N/A" && ans !== "") {
                 let expected = 1;
                 if (lblToMatch === "Penyimpanan B3" || lblToMatch === "Ketersediaan SDS") {
                   expected = row.seharusnyaLemari > 0 ? row.seharusnyaLemari : (parseInt(String(row.terlihatLemari), 10) || 0);
@@ -778,7 +817,7 @@ function PatroliDetailContent() {
             else if (ansA.jawaban === "N/A") summary[colIdx * 2].na++;
           }
 
-          const ansB = p.answers.find((a: any) => a.label.includes("Sambungan listrik aman"));
+          const ansB = p.answers.find((a: any) => a.label.toLowerCase().includes("sambungan listrik aman"));
           if (ansB) {
             if (ansB.jawaban === "Ya") summary[(colIdx * 2) + 1].ya++;
             else if (ansB.jawaban === "Tidak") summary[(colIdx * 2) + 1].tidak++;
@@ -792,53 +831,107 @@ function PatroliDetailContent() {
   }, [slug, elektrikReportData]);
 
   const setBulan = (newBulan: string) => {
-    setBulanState(newBulan);
     const newParams = new URLSearchParams(searchParams.toString());
     newParams.set("bulan", newBulan);
-    router.push(`?${newParams.toString()}`);
+    router.push(`${pathname}?${newParams.toString()}`, { scroll: false });
   };
 
   const setRuangan = (newRuangan: string) => {
-    setRuanganState(newRuangan);
     const newParams = new URLSearchParams(searchParams.toString());
     if (newRuangan) newParams.set("ruangan", newRuangan);
     else newParams.delete("ruangan");
-    router.push(`?${newParams.toString()}`);
+    router.push(`${pathname}?${newParams.toString()}`, { scroll: false });
   };
 
   useEffect(() => {
-    if (queryBulan !== null && queryBulan !== bulan) setBulanState(queryBulan);
-    if (queryRuangan !== null && queryRuangan !== ruangan) setRuanganState(queryRuangan);
-  }, [queryBulan, queryRuangan, bulan, ruangan]);
-
-  const fetchData = useCallback(async () => {
     if (!slug) return;
-    setLoading(true);
-    setError(null);
-    try {
-      let url = `/api/patrol-data?mode=module&slug=${slug}&bulan=${bulan}`;
-      if (ruangan) url += `&ruangan=${encodeURIComponent(ruangan)}`;
-      if (startDate && endDate) url += `&startDate=${startDate}&endDate=${endDate}`;
 
-      const res = await fetch(url, { cache: 'no-store' });
-      if (!res.ok) throw new Error("Gagal mengambil data");
-      
-      const json = await res.json();
-
-      setData(json);
-      if (json.masterData) {
-        setMasterData(json.masterData);
-      }
-    } catch (e: any) {
-      setError(e.message || "Error");
-    } finally {
-      setLoading(false);
+    // Abort any previous in-flight request
+    if (abortRef.current) {
+      abortRef.current.abort();
     }
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    const doFetch = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        let url = `/api/patrol-data?mode=module&slug=${slug}&bulan=${bulan}`;
+        if (ruangan) url += `&ruangan=${encodeURIComponent(ruangan)}`;
+        if (startDate && endDate) url += `&startDate=${startDate}&endDate=${endDate}`;
+
+        const res = await fetch(url, {
+          cache: 'no-store',
+          signal: controller.signal,
+        });
+        if (!res.ok) throw new Error("Gagal mengambil data");
+        
+        const json = await res.json();
+
+        // Only update state if this request was NOT aborted
+        if (!controller.signal.aborted) {
+          setData(json);
+          if (json.masterData) {
+            setMasterData(json.masterData);
+          }
+        }
+      } catch (e: any) {
+        // Ignore AbortError — it's expected when switching tabs/filters
+        if (e.name === 'AbortError') return;
+        if (!controller.signal.aborted) {
+          setError(e.message || "Error");
+        }
+      } finally {
+        if (!controller.signal.aborted) {
+          setLoading(false);
+        }
+      }
+    };
+
+    doFetch();
+
+    return () => {
+      controller.abort();
+    };
   }, [slug, bulan, ruangan, startDate, endDate]);
 
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+  // Manual refresh: triggers the useEffect above by nudging startDate
+  const fetchData = useCallback(() => {
+    // Force the useEffect to re-run by toggling a micro-state change
+    setStartDate(prev => prev === "" ? "" : prev);
+    setEndDate(prev => prev === "" ? "" : prev);
+    // Since the deps didn't actually change, we need to abort+re-fetch manually
+    if (abortRef.current) abortRef.current.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    setLoading(true);
+    setError(null);
+
+    let url = `/api/patrol-data?mode=module&slug=${slug}&bulan=${bulan}`;
+    if (ruangan) url += `&ruangan=${encodeURIComponent(ruangan)}`;
+    if (startDate && endDate) url += `&startDate=${startDate}&endDate=${endDate}`;
+
+    fetch(url, { cache: 'no-store', signal: controller.signal })
+      .then(res => {
+        if (!res.ok) throw new Error("Gagal mengambil data");
+        return res.json();
+      })
+      .then(json => {
+        if (!controller.signal.aborted) {
+          setData(json);
+          if (json.masterData) setMasterData(json.masterData);
+        }
+      })
+      .catch(e => {
+        if (e.name === 'AbortError') return;
+        if (!controller.signal.aborted) setError(e.message || "Error");
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+  }, [slug, bulan, ruangan, startDate, endDate]);
 
   const handleGenerateSummary = async () => {
     if (!data || data.submissions.length === 0) return;
@@ -968,9 +1061,13 @@ function PatroliDetailContent() {
                 const answerObj = p.answers.find((a: any) => a.label.includes("menggunakan APD") || a.label.includes("Kepatuhan"));
                 const rawAns = answerObj ? answerObj.jawaban : "-";
                 
-                if (rawAns !== "-" && rawAns !== "N/A") {
+                if (rawAns !== "-" && rawAns !== "N/A" && rawAns !== "") {
                   if (row.jumlahKaryawan > 0) {
-                    const nonCompliantCount = (p.tags || []).filter((t: string) => t.trim() !== "").length;
+                    let nonCompliantCount = 0;
+                    if (rawAns === "Tidak") {
+                      const tagsCount = (p.tags || []).filter((t: string) => t.trim() !== "").length;
+                      nonCompliantCount = tagsCount > 0 ? tagsCount : 1;
+                    }
                     let compliant = row.jumlahKaryawan - nonCompliantCount;
                     if (compliant < 0) compliant = 0;
                     ans = compliant.toString();
@@ -1019,8 +1116,8 @@ function PatroliDetailContent() {
 
           let totalCompliantSum = 0;
           apdSummary?.forEach((s, i) => {
-            rowAvg[`p${i}`] = s.validPctCount > 0 ? Math.round(s.totalPct / s.validPctCount).toString() : "-";
-            totalCompliantSum += s.totalPct;
+            rowAvg[`p${i}`] = s.totalCompliant.toString();
+            totalCompliantSum += s.totalCompliant;
           });
 
           let totalNonCompliantSum = 0;
@@ -1028,8 +1125,12 @@ function PatroliDetailContent() {
             row.patrols.forEach(p => {
               if (p && row.jumlahKaryawan > 0) {
                  const ansObj = p.answers.find((a: any) => a.label.includes("menggunakan APD") || a.label.includes("Kepatuhan"));
-                 if (ansObj && ansObj.jawaban !== "-" && ansObj.jawaban !== "N/A") {
-                    const nonCompliantCount = (p.tags || []).filter((t: string) => t.trim() !== "").length;
+                 if (ansObj && ansObj.jawaban !== "-" && ansObj.jawaban !== "N/A" && ansObj.jawaban !== "") {
+                    let nonCompliantCount = 0;
+                    if (ansObj.jawaban === "Tidak") {
+                      const tagsCount = (p.tags || []).filter((t: string) => t.trim() !== "").length;
+                      nonCompliantCount = tagsCount > 0 ? tagsCount : 1;
+                    }
                     let compliant = row.jumlahKaryawan - nonCompliantCount;
                     if (compliant < 0) compliant = 0;
                     totalNonCompliantSum += (row.jumlahKaryawan - compliant);
@@ -1052,7 +1153,7 @@ function PatroliDetailContent() {
             const t = s.ya + s.tidak;
             return t > 0 ? Number(((s.ya / t) * 100).toFixed(0)) : 0;
           } else {
-            return s.validPctCount > 0 ? Number((s.totalPct / s.validPctCount).toFixed(0)) : 0;
+            return s.totalKaryawan > 0 ? Number(((s.totalCompliant / s.totalKaryawan) * 100).toFixed(0)) : 0;
           }
         }) || [];
 
@@ -1161,7 +1262,7 @@ function PatroliDetailContent() {
           const rowData: any = {
             no: i + 1,
             ruangan: row.ruangan,
-            keterangan: row.keterangan,
+            keterangan: activeB3Tab === "c" ? row.keteranganC : row.keteranganA,
           };
           if (activeB3Tab === "a") {
             rowData.seh = row.seharusnyaLemari;
@@ -1195,7 +1296,7 @@ function PatroliDetailContent() {
               const answerObj = p.answers.find((a: any) => a.label.includes(labelToMatch));
               const rawAns = answerObj ? answerObj.jawaban : "-";
               
-              if (rawAns !== "-" && rawAns !== "N/A") {
+              if (rawAns !== "-" && rawAns !== "N/A" && rawAns !== "") {
                 totalExpected += expectedQ1;
                 if (rawAns === "Ya") {
                   ans = expectedQ1;
@@ -1220,7 +1321,7 @@ function PatroliDetailContent() {
               const answerObj = p.answers.find((a: any) => a.label.includes(labelToMatch));
               const rawAns = answerObj ? answerObj.jawaban : "-";
 
-              if (rawAns !== "-" && rawAns !== "N/A") {
+              if (rawAns !== "-" && rawAns !== "N/A" && rawAns !== "") {
                 totalExpected += expectedQ2;
                 if (rawAns === "Ya") {
                   ans = expectedQ2;
@@ -1382,7 +1483,7 @@ function PatroliDetailContent() {
             let jawB = "-";
             if (p) {
               const ansA = p.answers.find((a: any) => a.label.includes("Perkabelan aman"))?.jawaban;
-              const ansB = p.answers.find((a: any) => a.label.includes("Sambungan listrik aman"))?.jawaban;
+              const ansB = p.answers.find((a: any) => a.label.toLowerCase().includes("sambungan listrik aman"))?.jawaban;
               jawA = ansA || "-";
               jawB = ansB || "-";
 
@@ -1660,6 +1761,7 @@ function PatroliDetailContent() {
             className="form-control h-9"
             id="filter-bulan"
           />
+          <LockMonthButton bulan={bulan} infoOnlyMode={true} />
         </div>
 
         {/* Date range */}
@@ -1855,7 +1957,7 @@ function PatroliDetailContent() {
         <section aria-label="Detail Per Pertanyaan" id="chart-per-pertanyaan" className="bg-white dark:bg-slate-900 rounded-2xl p-2">
           <h2 className="section-label mb-3 ml-4 mt-2">📊 Kepatuhan Per Pertanyaan</h2>
           {customQuestionResults.length ? (
-            <QuestionHorizontalChart data={customQuestionResults} />
+            <QuestionHorizontalChart data={customQuestionResults} moduleSlug={slug} />
           ) : (
             <div className="card p-6 text-center text-gray-400 dark:text-gray-500">
               Tidak ada data pertanyaan untuk periode ini.
@@ -1957,7 +2059,7 @@ function PatroliDetailContent() {
                         let jawB = "-";
                         if (p) {
                           const ansA = p.answers.find((a: any) => a.label.includes("Perkabelan aman"));
-                          const ansB = p.answers.find((a: any) => a.label.includes("Sambungan listrik aman"));
+                          const ansB = p.answers.find((a: any) => a.label.toLowerCase().includes("sambungan listrik aman"));
                           jawA = ansA ? ansA.jawaban : "-";
                           jawB = ansB ? ansB.jawaban : "-";
                         }
@@ -1987,7 +2089,7 @@ function PatroliDetailContent() {
                         row.patrols.forEach((p: any) => {
                           if (p) {
                             const ansA = p.answers.find((a: any) => a.label.includes("Perkabelan aman"))?.jawaban;
-                            const ansB = p.answers.find((a: any) => a.label.includes("Sambungan listrik aman"))?.jawaban;
+                            const ansB = p.answers.find((a: any) => a.label.toLowerCase().includes("sambungan listrik aman"))?.jawaban;
                             if (ansA === "Ya") { yaCount++; totalCount++; } else if (ansA === "Tidak") { totalCount++; }
                             if (ansB === "Ya") { yaCount++; totalCount++; } else if (ansB === "Tidak") { totalCount++; }
                           }
@@ -2144,11 +2246,22 @@ function PatroliDetailContent() {
                           let kepatuhan = 0;
                           if (p) {
                             if (row.jumlahKaryawan > 0) {
-                              const nonCompliantCount = (p.tags || []).filter((t: string) => t.trim() !== "").length;
-                              let compliant = row.jumlahKaryawan - nonCompliantCount;
-                              if (compliant < 0) compliant = 0;
-                              valDisplay = compliant.toString();
-                              kepatuhan = (compliant / row.jumlahKaryawan) * 100;
+                              const ansObj = p.answers.find((a: any) => a.label.includes("menggunakan APD") || a.label.includes("Kepatuhan"));
+                              const rawAns = ansObj ? ansObj.jawaban : "-";
+                              
+                              if (rawAns !== "-" && rawAns !== "N/A" && rawAns !== "") {
+                                let nonCompliantCount = 0;
+                                if (rawAns === "Tidak") {
+                                  const tagsCount = (p.tags || []).filter((t: string) => t.trim() !== "").length;
+                                  nonCompliantCount = tagsCount > 0 ? tagsCount : 1;
+                                }
+                                let compliant = row.jumlahKaryawan - nonCompliantCount;
+                                if (compliant < 0) compliant = 0;
+                                valDisplay = compliant.toString();
+                                kepatuhan = (compliant / row.jumlahKaryawan) * 100;
+                              } else {
+                                valDisplay = rawAns;
+                              }
                             } else {
                               valDisplay = "N/A";
                             }
@@ -2192,11 +2305,18 @@ function PatroliDetailContent() {
                           let sumNonCompliant = 0;
                           row.patrols.forEach((p: any) => {
                             if (p && row.jumlahKaryawan > 0) {
-                              const nonCompliantCount = (p.tags || []).filter((t: string) => t.trim() !== "").length;
-                              let compliant = row.jumlahKaryawan - nonCompliantCount;
-                              if (compliant < 0) compliant = 0;
-                              sumCompliant += compliant;
-                              sumNonCompliant += (row.jumlahKaryawan - compliant);
+                              const ansObj = p.answers.find((a: any) => a.label.includes("menggunakan APD") || a.label.includes("Kepatuhan"));
+                              if (ansObj && ansObj.jawaban !== "-" && ansObj.jawaban !== "N/A" && ansObj.jawaban !== "") {
+                                let nonCompliantCount = 0;
+                                if (ansObj.jawaban === "Tidak") {
+                                  const tagsCount = (p.tags || []).filter((t: string) => t.trim() !== "").length;
+                                  nonCompliantCount = tagsCount > 0 ? tagsCount : 1;
+                                }
+                                let compliant = row.jumlahKaryawan - nonCompliantCount;
+                                if (compliant < 0) compliant = 0;
+                                sumCompliant += compliant;
+                                sumNonCompliant += (row.jumlahKaryawan - compliant);
+                              }
                             }
                           });
                           return (
@@ -2269,13 +2389,22 @@ function PatroliDetailContent() {
                         {reportData.reduce((acc, curr) => acc + curr.jumlahKaryawan, 0)}
                       </td>
                       {apdSummary?.map((s, i) => (
-                        <td key={i} className="text-center border-r border-gray-200 dark:border-slate-700">{s.validPctCount > 0 ? Math.round(s.totalPct / s.validPctCount).toString() : "-"}</td>
+                        <td key={i} className="text-center py-1 border-r border-gray-200 dark:border-slate-700">
+                          {s.totalKaryawan > 0 ? (
+                            <div className="flex flex-col items-center justify-center gap-0.5">
+                              <span>{s.totalCompliant}</span>
+                              <span className="text-[10px] font-medium bg-indigo-200 dark:bg-indigo-800 text-indigo-900 dark:text-indigo-100 px-1 py-0.5 rounded leading-none">
+                                {Math.round((s.totalCompliant / s.totalKaryawan) * 100)}%
+                              </span>
+                            </div>
+                          ) : "-"}
+                        </td>
                       ))}
                       <td className="text-center py-2 font-bold bg-green-100/80 dark:bg-green-900/40 text-green-800 dark:text-green-300">
                         {(() => {
                           let totalCompliantSum = 0;
                           apdSummary?.forEach(s => {
-                            totalCompliantSum += s.totalPct;
+                            totalCompliantSum += s.totalCompliant;
                           });
                           return (
                             <div className="flex flex-col items-center justify-center gap-1">
@@ -2293,10 +2422,17 @@ function PatroliDetailContent() {
                           reportData.forEach(row => {
                             row.patrols.forEach(p => {
                               if (p && row.jumlahKaryawan > 0) {
-                                const nonCompliantCount = (p.tags || []).filter((t: string) => t.trim() !== "").length;
-                                let compliant = row.jumlahKaryawan - nonCompliantCount;
-                                if (compliant < 0) compliant = 0;
-                                totalNonCompliantSum += (row.jumlahKaryawan - compliant);
+                                const ansObj = p.answers.find((a: any) => a.label.includes("menggunakan APD") || a.label.includes("Kepatuhan"));
+                                if (ansObj && ansObj.jawaban !== "-" && ansObj.jawaban !== "N/A" && ansObj.jawaban !== "") {
+                                  let nonCompliantCount = 0;
+                                  if (ansObj.jawaban === "Tidak") {
+                                    const tagsCount = (p.tags || []).filter((t: string) => t.trim() !== "").length;
+                                    nonCompliantCount = tagsCount > 0 ? tagsCount : 1;
+                                  }
+                                  let compliant = row.jumlahKaryawan - nonCompliantCount;
+                                  if (compliant < 0) compliant = 0;
+                                  totalNonCompliantSum += (row.jumlahKaryawan - compliant);
+                                }
                               }
                             });
                           });
@@ -2441,7 +2577,7 @@ function PatroliDetailContent() {
                           const answerObj = p.answers.find((a: any) => a.label.includes(labelToMatch));
                           ans = answerObj ? answerObj.jawaban : "-";
 
-                          if (ans !== "-" && ans !== "N/A") {
+                          if (ans !== "-" && ans !== "N/A" && ans !== "") {
                             let expected = 1;
                             if (activeB3Tab === "a") expected = row.seharusnyaLemari > 0 ? row.seharusnyaLemari : (parseInt(row.terlihatLemari as string, 10) || 0);
 
@@ -2489,7 +2625,7 @@ function PatroliDetailContent() {
                           const answerObj = p.answers.find((a: any) => a.label.includes(labelToMatch));
                           ans = answerObj ? answerObj.jawaban : "-";
 
-                          if (ans !== "-" && ans !== "N/A") {
+                          if (ans !== "-" && ans !== "N/A" && ans !== "") {
                             let expected = 1;
                             if (activeB3Tab === "a") expected = row.seharusnyaLemari > 0 ? row.seharusnyaLemari : (parseInt(row.terlihatLemari as string, 10) || 0);
 
@@ -2544,7 +2680,7 @@ function PatroliDetailContent() {
                               return 1;
                             };
 
-                            if (a1 && a1.jawaban !== "N/A" && a1.jawaban !== "-") {
+                            if (a1 && a1.jawaban !== "N/A" && a1.jawaban !== "-" && a1.jawaban !== "") {
                               const exp = getExpected(lbl1);
                               totalExpected += exp;
                               if (a1.jawaban === "Ya") compliantCount += exp;
@@ -2553,7 +2689,7 @@ function PatroliDetailContent() {
                                 compliantCount += Math.max(0, exp - nonCompliant);
                               }
                             }
-                            if (a2 && a2.jawaban !== "N/A" && a2.jawaban !== "-") {
+                            if (a2 && a2.jawaban !== "N/A" && a2.jawaban !== "-" && a2.jawaban !== "") {
                               const exp = getExpected(lbl2);
                               totalExpected += exp;
                               if (a2.jawaban === "Ya") compliantCount += exp;
@@ -2584,17 +2720,22 @@ function PatroliDetailContent() {
                         );
                       })()}
 
-                      <td className="text-xs max-w-[150px]">
-                        {row.keterangan && row.keterangan !== "-" ? (
-                          <button
-                            onClick={() => setKeteranganPopup(row.keterangan)}
-                            className="text-left text-blue-600 dark:text-blue-400 underline underline-offset-2 truncate block w-full hover:text-blue-800 dark:hover:text-blue-200 transition-colors"
-                            title="Klik untuk lihat selengkapnya"
-                          >
-                            {row.keterangan.length > 40 ? row.keterangan.substring(0, 40) + "…" : row.keterangan}
-                          </button>
-                        ) : <span className="text-gray-400">-</span>}
-                      </td>
+                      {(() => {
+                        const ket = activeB3Tab === "c" ? row.keteranganC : row.keteranganA;
+                        return (
+                          <td className="text-xs max-w-[150px]">
+                            {ket && ket !== "-" ? (
+                              <button
+                                onClick={() => setKeteranganPopup(ket)}
+                                className="text-left text-blue-600 dark:text-blue-400 underline underline-offset-2 truncate block w-full hover:text-blue-800 dark:hover:text-blue-200 transition-colors"
+                                title="Klik untuk lihat selengkapnya"
+                              >
+                                {ket.length > 40 ? ket.substring(0, 40) + "…" : ket}
+                              </button>
+                            ) : <span className="text-gray-400">-</span>}
+                          </td>
+                        );
+                      })()}
                     </tr>
                   ))}
                   {b3ReportData.length === 0 && (

@@ -6,7 +6,6 @@ import { usePathname, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import { MODULES_BY_GROUP, GROUPS, type ModuleDef } from "@/lib/modules";
 import { getCurrentBulan } from "@/lib/utils";
-import ThemeToggle from "./ThemeToggle";
 
 interface SidebarProps {
   isOpen: boolean;
@@ -35,6 +34,7 @@ function NavItem({ item, onClick, badgeCount, isCollapsed }: { item: ModuleDef; 
   return (
     <Link
       href={href}
+      prefetch={false}
       onClick={onClick}
       title={isCollapsed ? item.title : undefined}
       aria-current={active ? "page" : undefined}
@@ -250,7 +250,7 @@ function SidebarContent({ isOpen, onClose, isCollapsed, onToggleCollapse }: Side
 
         {/* Form link */}
         <a
-          href="https://forms.gle/mY3XVATvivk7L8PE8"
+          href="https://forms.gle/C9YZAJLHjAZMdnHY8"
           target="_blank"
           rel="noopener noreferrer"
           title={isCollapsed ? "Isi Form Patroli" : undefined}
@@ -259,20 +259,6 @@ function SidebarContent({ isOpen, onClose, isCollapsed, onToggleCollapse }: Side
           <span>📝</span>
           {!isCollapsed && <span>Isi Form Patroli</span>}
         </a>
-
-        {/* Theme Toggle */}
-        <ThemeToggle isCollapsed={isCollapsed} />
-
-        {/* Master Data Admin link */}
-        <Link
-          href="/admin/master"
-          onClick={onClose}
-          title={isCollapsed ? "Admin Master Data" : undefined}
-          className={`flex items-center gap-2.5 mx-2 px-3 py-2 rounded-lg text-[12px] font-medium text-white/60 hover:bg-white/10 hover:text-white transition-all duration-150 ${isCollapsed ? "justify-center !px-0" : ""}`}
-        >
-          <span className="text-[14px] w-5 text-center flex-shrink-0">🗄️</span>
-          {!isCollapsed && <span>Master Data</span>}
-        </Link>
 
         {/* Settings link */}
         <Link

@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback, Suspense } from "react";
+import { useState, useEffect, useCallback, Suspense, useRef } from "react";
+import LockMonthButton from "@/components/LockMonthButton";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { getCurrentBulan, formatBulan, formatTimestamp, downloadWithSavePrompt } from "@/lib/utils";
@@ -18,6 +19,7 @@ interface ModuleSummary {
   submissionsThisMonth: number;
   needsAttentionCount: number;
   logOnly: boolean;
+  targetPct: number;
 }
 
 interface RecentFinding {
@@ -52,10 +54,10 @@ interface SummaryData {
   totalSubmissions: number;
 }
 
-function PctBadge({ pct, logOnly }: { pct: number | null; logOnly?: boolean }) {
+function PctBadge({ pct, logOnly, targetPct = 90 }: { pct: number | null; logOnly?: boolean; targetPct?: number }) {
   if (logOnly) return <span className="badge-blue">Log Kegiatan</span>;
   if (pct === null) return <span className="badge-gray">Belum Ada Data</span>;
-  const status = pctStatus(pct);
+  const status = pctStatus(pct, targetPct);
   if (status === "green") return <span className="badge-green">✓ {pct}%</span>;
   if (status === "yellow") return <span className="badge-yellow">⚠ {pct}%</span>;
   return <span className="badge-red">✗ {pct}%</span>;
@@ -69,7 +71,7 @@ function TrendIndicator({ trend }: { trend: number | null }) {
 }
 
 function ModuleCard({ mod }: { mod: ModuleSummary }) {
-  const status = mod.logOnly ? "gray" : pctStatus(mod.pctThisMonth);
+  const status = mod.logOnly ? "gray" : pctStatus(mod.pctThisMonth, mod.targetPct);
   const barColor = {
     green: "bg-green-500",
     yellow: "bg-amber-500",
@@ -80,6 +82,7 @@ function ModuleCard({ mod }: { mod: ModuleSummary }) {
   return (
     <Link
       href={`/patroli/${mod.slug}`}
+      prefetch={false}
       id={`card-${mod.slug}`}
       className="card-hover p-4 flex flex-col gap-3 cursor-pointer"
     >
@@ -105,7 +108,7 @@ function ModuleCard({ mod }: { mod: ModuleSummary }) {
 
       <div>
         <div className="flex items-end justify-between mb-1.5">
-          <PctBadge pct={mod.pctThisMonth} logOnly={mod.logOnly} />
+          <PctBadge pct={mod.pctThisMonth} logOnly={mod.logOnly} targetPct={mod.targetPct} />
           <span className="text-xs text-gray-400">
             {mod.submissionsThisMonth} data
           </span>
@@ -208,7 +211,8 @@ function DashboardContent() {
   const searchParams = useSearchParams();
   const queryBulan = searchParams.get("bulan");
 
-  const [bulan, setBulanState] = useState(queryBulan || getCurrentBulan());
+  // Use searchParams as source of truth
+  const bulan = queryBulan || getCurrentBulan();
   const [data, setData] = useState<SummaryData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -216,39 +220,64 @@ function DashboardContent() {
   const [aiSummary, setAiSummary] = useState<string | null>(null);
   const [generatingAi, setGeneratingAi] = useState(false);
   const [aiContext, setAiContext] = useState("");
+  const [isMonthLocked, setIsMonthLocked] = useState(false);
+
+  const abortRef = useRef<AbortController | null>(null);
 
   const setBulan = (newBulan: string) => {
-    setBulanState(newBulan);
-    router.push(`/?bulan=${newBulan}`);
+    router.push(`/?bulan=${newBulan}`, { scroll: false });
   };
 
-  useEffect(() => {
-    if (queryBulan && queryBulan !== bulan) {
-      setBulanState(queryBulan);
-    }
-  }, [queryBulan, bulan]);
+  const fetchData = useCallback(() => {
+    if (abortRef.current) abortRef.current.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
 
-  const fetchData = useCallback(async () => {
     setLoading(true);
     setError(null);
-    try {
-      const res = await fetch(`/api/patrol-data?mode=summary&bulan=${bulan}`);
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || "Gagal memuat data");
-      }
-      const json = await res.json();
-      setData(json);
-      // Dispatch event to update sidebar badges
-      window.dispatchEvent(new CustomEvent('dashboardUpdate', { detail: json }));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Error tidak diketahui");
-    } finally {
-      setLoading(false);
-    }
+
+    fetch(`/api/patrol-data?mode=summary&bulan=${bulan}`, { signal: controller.signal })
+      .then(res => {
+        if (!res.ok) return res.json().then(err => { throw new Error(err.error || "Gagal memuat data"); });
+        return res.json();
+      })
+      .then(json => {
+        if (!controller.signal.aborted) {
+          setData(json);
+          window.dispatchEvent(new CustomEvent('dashboardUpdate', { detail: json }));
+        }
+      })
+      .catch(e => {
+        if (e.name === 'AbortError') return;
+        if (!controller.signal.aborted) {
+          setError(e instanceof Error ? e.message : "Error tidak diketahui");
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
   }, [bulan]);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => {
+    fetchData();
+    return () => {
+      if (abortRef.current) abortRef.current.abort();
+    };
+  }, [fetchData]);
+
+  // Cek apakah bulan yang dipilih sudah dikunci (data historis)
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/locked-months")
+      .then((r) => r.json())
+      .then((d) => {
+        if (cancelled) return;
+        const months: string[] = d.lockedMonths ?? [];
+        setIsMonthLocked(months.includes(bulan));
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [bulan]);
 
   const handleGenerateSummary = async () => {
     if (!data) return;
@@ -331,6 +360,7 @@ function DashboardContent() {
               onChange={(e) => setBulan(e.target.value)}
               className="form-control h-9"
             />
+            <LockMonthButton bulan={bulan} />
           </div>
 
           <button
@@ -351,6 +381,23 @@ function DashboardContent() {
           </button>
         </div>
       </div>
+
+      {/* ── Banner Data Historis (Dikunci) ── */}
+      {isMonthLocked && (
+        <div className="flex items-start gap-3 px-4 py-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-300 dark:border-amber-700 rounded-xl text-sm">
+          <span className="text-xl leading-none mt-0.5">🔒</span>
+          <div>
+            <p className="font-semibold text-amber-800 dark:text-amber-300">
+              Menampilkan Data Historis — Bulan {formatBulan(bulan)}
+            </p>
+            <p className="text-amber-700 dark:text-amber-400 mt-0.5 text-xs">
+              Data master (nama ruangan, jumlah pegawai, dll.) untuk bulan ini sudah dikunci.
+              Nilai yang ditampilkan adalah <strong>snapshot</strong> yang tersimpan saat kunci dibuat,
+              bukan data master terkini.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* ── Error ── */}
       {error && (
@@ -427,18 +474,25 @@ function DashboardContent() {
             {[
               { label: "Total Submission", val: data?.totalSubmissions ?? 0, icon: "📋" },
               {
-                label: "Patuh (≥90%)",
-                val: (data?.summaries ?? []).filter((s) => !s.logOnly && s.pctThisMonth !== null && s.pctThisMonth >= 90).length,
+                label: "Patuh",
+                val: (data?.summaries ?? []).filter(
+                  (s) => !s.logOnly && s.pctThisMonth !== null && s.pctThisMonth >= (s.targetPct ?? 90)
+                ).length,
                 icon: "✅",
               },
               {
                 label: "Perlu Perbaikan",
-                val: (data?.summaries ?? []).filter((s) => !s.logOnly && s.pctThisMonth !== null && s.pctThisMonth >= 70 && s.pctThisMonth < 90).length,
+                val: (data?.summaries ?? []).filter(
+                  (s) => !s.logOnly && s.pctThisMonth !== null &&
+                    s.pctThisMonth >= 70 && s.pctThisMonth < (s.targetPct ?? 90)
+                ).length,
                 icon: "⚠️",
               },
               {
-                label: "Tidak Patuh (<70%)",
-                val: (data?.summaries ?? []).filter((s) => !s.logOnly && s.pctThisMonth !== null && s.pctThisMonth < 70).length,
+                label: "Tidak Patuh",
+                val: (data?.summaries ?? []).filter(
+                  (s) => !s.logOnly && s.pctThisMonth !== null && s.pctThisMonth < 70
+                ).length,
                 icon: "🔴",
               },
             ].map(({ label, val, icon }) => (

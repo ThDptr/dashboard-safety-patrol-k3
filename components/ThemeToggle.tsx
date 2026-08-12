@@ -4,7 +4,13 @@ import { useTheme } from "next-themes";
 import { useEffect, useState } from "react";
 import { Moon, Sun } from "lucide-react";
 
-export default function ThemeToggle({ isCollapsed }: { isCollapsed?: boolean }) {
+export default function ThemeToggle({ 
+  isCollapsed,
+  variant = "sidebar"
+}: { 
+  isCollapsed?: boolean;
+  variant?: "sidebar" | "settings";
+}) {
   const [mounted, setMounted] = useState(false);
   const { theme, setTheme } = useTheme();
 
@@ -15,6 +21,19 @@ export default function ThemeToggle({ isCollapsed }: { isCollapsed?: boolean }) 
 
   if (!mounted) {
     return <div className="w-5 h-5 mx-auto" />; // placeholder to prevent layout shift
+  }
+
+  if (variant === "settings") {
+    return (
+      <button
+        onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+        className="px-4 py-2 rounded-lg font-medium text-sm border-2 transition-all hover:-translate-y-0.5 hover:shadow-md flex items-center gap-2"
+        style={{ borderColor: "#9e9e9e", background: "white", color: "#424242" }}
+      >
+        {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
+        {theme === "dark" ? "Mode Terang" : "Mode Gelap"}
+      </button>
+    );
   }
 
   return (

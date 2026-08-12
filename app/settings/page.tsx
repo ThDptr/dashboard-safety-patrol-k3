@@ -1,10 +1,22 @@
+"use client";
 import Link from "next/link";
+import ThemeToggle from "@/components/ThemeToggle";
 
-const FORM_URL = "https://docs.google.com/forms/d/1Hm3NSzpeG7NdOiPwSBkBn49mVh-t-CYDPncOoKlo0Fg/edit";
-const SHEET_URL = "https://docs.google.com/spreadsheets/d/1jrKUxgU106VhCsK2hwHFZSqcEUHWjiJmcXlqtZNWA1o/edit?usp=sharing";
+const FORM_URL = "https://docs.google.com/forms/d/1aGG59GOZLQ7IGG6Jc1BakbETd8TgXkc-RaSqPI67Igc/edit#responses";
+const SHEET_URL = "https://docs.google.com/spreadsheets/d/1cX0s-kW_fiGwmN5QQNSww3o2tiG3UK1_CeADJXIC5Ys/edit?usp=sharing";
 const MANUAL_BOOK_URL = "https://docs.google.com/document/d/1tjTk21XYwqzbgRvE39rN0T7WQ1Y-OkdyeD7_k2rcL3g/edit?usp=sharing";
 
 export default function SettingsPage() {
+  const handleEditFormClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const pwd = prompt("Masukkan password untuk mengedit form:");
+    if (pwd === "k3rs") {
+      window.open(FORM_URL, "_blank");
+    } else if (pwd !== null) {
+      alert("Password salah!");
+    }
+  };
+
   return (
     <div className="p-4 md:p-8 max-w-3xl mx-auto space-y-6">
       <div>
@@ -14,17 +26,61 @@ export default function SettingsPage() {
         </p>
       </div>
 
+      {/* Tampilan */}
+      <div className="card p-6 space-y-3">
+        <h2 className="font-bold text-gray-700 text-sm uppercase tracking-wider mb-4">
+          🎨 Tampilan
+        </h2>
+        <div className="flex items-center justify-between p-4 rounded-xl border-2 transition-all hover:shadow-md" style={{ borderColor: "#9e9e9e", background: "linear-gradient(135deg,#f5f5f5,#eeeeee)" }}>
+          <div className="flex items-center gap-4">
+             <div className="text-3xl">🌗</div>
+             <div>
+               <div className="font-bold text-gray-800">
+                 Mode Gelap
+               </div>
+               <div className="text-xs text-gray-600 mt-0.5">
+                 Sesuaikan tampilan aplikasi
+               </div>
+             </div>
+          </div>
+          <div>
+            <ThemeToggle isCollapsed={false} variant="settings" />
+          </div>
+        </div>
+      </div>
+
+      {/* Admin */}
+      <div className="card p-6 space-y-3">
+        <h2 className="font-bold text-gray-700 text-sm uppercase tracking-wider mb-4">
+          🛡️ Administrasi
+        </h2>
+        <Link
+          href="/admin/master"
+          className="flex items-center gap-4 p-4 rounded-xl border-2 transition-all hover:-translate-y-0.5 hover:shadow-md group"
+          style={{ borderColor: "#673ab7", background: "linear-gradient(135deg,#ede7f6,#f3e5f5)" }}
+        >
+          <div className="text-3xl">🗄️</div>
+          <div className="flex-1">
+            <div className="font-bold text-purple-800 group-hover:underline">
+              Admin Master Data
+            </div>
+            <div className="text-xs text-purple-600 mt-0.5">
+              Kelola master data ruangan, unit profesi, dan lainnya
+            </div>
+          </div>
+          <span className="text-purple-600">↗</span>
+        </Link>
+      </div>
+
       {/* Quick links */}
       <div className="card p-6 space-y-3">
         <h2 className="font-bold text-gray-700 text-sm uppercase tracking-wider mb-4">
           🔗 Tautan Cepat
         </h2>
 
-        <a
-          href={FORM_URL}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex items-center gap-4 p-4 rounded-xl border-2 transition-all hover:-translate-y-0.5 hover:shadow-md group"
+        <button
+          onClick={handleEditFormClick}
+          className="flex items-center gap-4 p-4 rounded-xl border-2 transition-all hover:-translate-y-0.5 hover:shadow-md group text-left w-full"
           style={{ borderColor: "#1e88e5", background: "linear-gradient(135deg,#e3f2fd,#e8eaf6)" }}
         >
           <div className="text-3xl">📝</div>
@@ -37,7 +93,7 @@ export default function SettingsPage() {
             </div>
           </div>
           <span className="text-blue-600">↗</span>
-        </a>
+        </button>
 
         <a
           href={SHEET_URL}
