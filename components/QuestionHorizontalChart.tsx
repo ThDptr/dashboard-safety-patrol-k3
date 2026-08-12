@@ -188,7 +188,7 @@ export default function QuestionHorizontalChart({
   return (
     <div className="card p-6 flex flex-col">
       <div className="w-full overflow-x-auto pb-4">
-        <div className="min-w-[700px]" style={{ height: `${height}px` }}>
+        <div className="w-[800px] lg:w-full" style={{ height: `${height}px` }}>
           <ResponsiveContainer width="100%" height="100%">
           <BarChart
             data={chartData}
