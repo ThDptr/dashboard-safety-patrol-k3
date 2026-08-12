@@ -17,8 +17,12 @@ export default function SettingsPage() {
       
       const isValid = await verifySettingsPassword(pwd);
       
-      if (isValid && newTab) {
-        newTab.location.href = FORM_URL;
+      if (isValid) {
+        if (newTab) {
+          newTab.location.href = FORM_URL;
+        } else {
+          window.location.href = FORM_URL; // Fallback jika popup diblokir
+        }
       } else {
         if (newTab) newTab.close();
         alert("Password salah!");
