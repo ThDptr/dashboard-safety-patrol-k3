@@ -18,16 +18,7 @@ Dokumen ini berfungsi sebagai **Manual Book** terpadu untuk Pengguna (User), Adm
 - 📥 **Export Laporan (Excel & PDF)**: Mengunduh data hasil patroli secara rapi dan terstruktur dalam format `.xlsx` dan `.pdf`.
 - 🏢 **Manajemen Master Data & PCRA**: Admin dapat mengelola daftar ruangan, unit profesi, dan memonitor proyek konstruksi (PCRA).
 - 🔒 **Kunci Bulan (Lock Month)**: Fitur bagi Admin untuk mengunci data patroli pada bulan tertentu agar tidak bisa diubah lagi.
-- ⚡ **Kinerja Tinggi & Caching Cerdas**: Dilengkapi dengan *AbortController* untuk mencegah *race condition* saat perpindahan tab secara cepat, dan mekanisme *request deduplication* untuk mencegah *rate-limit* Google Apps Script.
-
----
-
-## 🔗 Akses & Link Penting
-
-- **Formulir Isi Patroli K3RS:** [Isi Form Disini](https://forms.gle/C9YZAJLHjAZMdnHY8)
-- **Edit Google Form:** [Mode Editor Form](https://docs.google.com/forms/d/1aGG59GOZLQ7IGG6Jc1BakbETd8TgXkc-RaSqPI67Igc/edit#responses)
-- **Spreadsheet Data Mentah:** [Google Sheets Data](https://docs.google.com/spreadsheets/d/1cX0s-kW_fiGwmN5QQNSww3o2tiG3UK1_CeADJXIC5Ys/edit?usp=sharing)
-- **Menu Pengaturan / Master Data:** Anda bisa mengatur tautan di atas melalui halaman **Pengaturan** di dashboard. Sandi default untuk mengubah Form Link adalah `k3rs`.
+- ⚡ **Kinerja Tinggi & Real-time**: Menggunakan sistem *caching* yang optimal dan sinkronisasi langsung dengan Google Sheets.
 
 ---
 
@@ -64,10 +55,12 @@ Panduan ini ditujukan bagi pimpinan, staf K3, atau pengguna umum yang ingin meli
   - **Ruangan:** (Opsional) Pilih ruangan/lokasi spesifik untuk mengerucutkan data.
 
 ### 2. Membaca Indikator Warna (Threshold)
-Sistem menggunakan warna untuk memudahkan identifikasi status kepatuhan:
-- 🟢 **Hijau (≥ 90%)**: Patuh & Aman.
-- 🟡 **Kuning (70% - 89%)**: Peringatan, Perlu Perbaikan.
-- 🔴 **Merah (< 70%)**: Tidak Patuh & Bahaya, butuh tindakan segera.
+Sistem menggunakan dua warna untuk menandakan status kepatuhan. Ambang batas (threshold) minimum dapat diatur oleh Admin untuk masing‑masing topik patroli. Secara bawaan, batas minimal adalah 90%.
+🟢 Hijau (≥ Threshold): Memenuhi standar.
+🔴 Merah (< Threshold): Di bawah standar, perlu tindakan perbaikan.
+⚪ Belum ada data: Jika pada periode/ruangan tertentu belum tercatat data patroli, indikator akan berwarna abu‑abu atau menampilkan keterangan “Belum ada data”.
+Catatan: Untuk mengetahui atau mengubah batas minimum suatu topik, hubungi Admin. Admin dapat mengaturnya di halaman Admin Master Data → Kelola Standar.
+
 
 ### 3. Membaca Grafik dan Tabel Detail
 Sistem secara otomatis menghitung tingkat kepatuhan secara presisi:
@@ -178,9 +171,6 @@ dashboard-safety-patrol-k3/
    
    # Kata sandi admin untuk mengakses Master Data & PCRA
    CRUD_SECRET=rahasia_rsomh_k3
-   
-   # Kata sandi pengaturan link edit form (hardcoded di pengaturan)
-   # Password: k3rs
    ```
 
 5. **Jalankan Server Development:**
@@ -191,10 +181,9 @@ dashboard-safety-patrol-k3/
 
 ### 🌐 API Routes & Manajemen Cache
 - **Keamanan Proxy:** Seluruh penarikan data ke Google dilakukan via server-side API Routes (`/api/master`, `/api/patrol-data`, `/api/lock-month`). Kunci rahasia seperti `CRUD_SECRET` tervalidasi menggunakan backend sehingga tidak terekspos ke sisi klien (browser).
-- **Efisiensi Pengambilan Data:** Pengambilan data paralel diproses menggunakan `Promise.allSettled` agar *error* di satu data (misal: 1 module gagal dimuat) tidak membatalkan keseluruhan *render* halaman (Fault Tolerance). Dilengkapi *in-flight deduplication* untuk mencegah pemanggilan berulang ke Google Sheet dalam waktu bersamaan.
-- **Cache Invalidation:** Manajemen *cache* memori (120-300 detik TTL) diatur di dalam `lib/google-sheets.ts` untuk menghindari *rate-limit* Google Apps Script dan mempercepat muat ulang. 
+- **Efisiensi Pengambilan Data:** Pengambilan data paralel diproses menggunakan `Promise.allSettled` agar *error* di satu data (misal: 1 module gagal dimuat) tidak membatalkan keseluruhan *render* halaman (Fault Tolerance).
+- **Cache Invalidation:** Manajemen *cache* memori (60 detik TTL) diatur di dalam `lib/google-sheets.ts` atau modul sejenisnya untuk menghindari *rate-limit* Google Apps Script. 
 - Operasi CRUD (Tambah/Edit) di endpoint `/api/master` akan otomatis memanggil fungsi invalidasi *cache*, sehingga data terbaru akan langsung tersaji tanpa *delay*.
-- **Pembatalan Request:** Modul dashboard memanfaatkan *AbortController* sehingga berpindah menu secara cepat tidak akan menimbulkan tabrakan *state* (State Race Condition).
 
 ### 🔧 Skrip NPM yang Tersedia
 - `npm run dev`: Menjalankan aplikasi dalam mode *development*.
