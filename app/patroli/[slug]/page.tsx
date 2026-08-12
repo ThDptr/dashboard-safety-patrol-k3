@@ -1928,13 +1928,13 @@ function PatroliDetailContent() {
                   </div>
                   <div className="bg-green-50 dark:bg-green-900/20 rounded-xl p-3 text-center">
                     <div className="text-xl font-black text-green-700 dark:text-green-400">
-                      {data.questionResults.filter((q) => q.pct !== null && q.pct >= 90).length}
+                      {data.questionResults.filter((q) => q.pct !== null && q.pct >= (q.targetPct ?? 90)).length}
                     </div>
                     <div className="text-xs text-green-600 dark:text-green-500">Pertanyaan Patuh</div>
                   </div>
                   <div className="bg-red-50 dark:bg-red-900/20 rounded-xl p-3 text-center">
                     <div className="text-xl font-black text-red-700 dark:text-red-400">
-                      {data.questionResults.filter((q) => q.pct !== null && q.pct < 70).length}
+                      {data.questionResults.filter((q) => q.pct !== null && q.pct < (q.targetPct ?? 90)).length}
                     </div>
                     <div className="text-xs text-red-600 dark:text-red-500">Perlu Perhatian</div>
                   </div>
