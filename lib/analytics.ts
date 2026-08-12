@@ -18,6 +18,7 @@ import {
   getField,
   getDisplayLocation,
 } from "./google-sheets";
+import { QUESTION_DESCRIPTIONS } from "./question-descriptions";
 
 // ─── Per-Question Result ──────────────────────────────────────────────────────
 
@@ -471,6 +472,10 @@ export function computeModuleAggregate(
       if (pertRow && pertRow.Deskripsi && pertRow.Deskripsi !== "-") {
         description = pertRow.Deskripsi.trim();
       }
+    }
+
+    if (!description && QUESTION_DESCRIPTIONS[q.label]) {
+      description = QUESTION_DESCRIPTIONS[q.label];
     }
 
 
