@@ -1011,16 +1011,33 @@ function PatroliDetailContent() {
     try {
       const ExcelJS = (await import('exceljs')).default;
       const workbook = new ExcelJS.Workbook();
-      const sheet = workbook.addWorksheet('Laporan Detail');
+      const apdSheetName = type === 'apd'
+        ? (activeApdTab === 'ketersediaan' ? 'a. Ketersediaan Terpenuhi' : 'b. Karyawan Menggunakan Sesuai')
+        : 'Laporan Detail';
+      const sheet = workbook.addWorksheet(type === 'apd' ? apdSheetName : 'Laporan Detail');
 
       if (type === 'apd') {
+        // ── Title row (baris 1) ──
+        const totalCols = 5 + 10 + (activeApdTab === 'ketersediaan' ? 1 : 2) + 1; // No+Tgl+Petugas+Ruangan+Pegawai + 10 patroli + rata/patuh + keterangan
+        const titleLabel = activeApdTab === 'ketersediaan'
+          ? 'a. Ketersediaan Terpenuhi APD'
+          : 'b. Karyawan Menggunakan APD Sesuai';
+        sheet.mergeCells(1, 1, 1, totalCols);
+        const titleCell = sheet.getCell(1, 1);
+        titleCell.value = `📄 Laporan Detail APD — ${titleLabel} — ${bulan}`;
+        titleCell.font = { bold: true, size: 12, color: { argb: 'FFB71C1C' } };
+        titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+        sheet.getRow(1).height = 24;
+
+        // ── Header row (baris 2) ──
+        const patroliColHeader = activeApdTab === 'ketersediaan' ? 'Ya/Tidak' : 'Jml Patuh';
         let cols: any = [
           { header: 'No', key: 'no', width: 5 },
           { header: 'Tanggal', key: 'tanggal', width: 15 },
           { header: 'Nama Petugas', key: 'petugas', width: 20 },
           { header: 'Ruangan', key: 'ruangan', width: 25 },
           { header: 'Jumlah Pegawai', key: 'pegawai', width: 15 },
-          ...Array(10).fill(0).map((_, i) => ({ header: `Patroli Ke-${i + 1}`, key: `p${i}`, width: 15 })),
+          ...Array(10).fill(0).map((_, i) => ({ header: `P${i + 1} — ${patroliColHeader}`, key: `p${i}`, width: 16 })),
         ];
 
         if (activeApdTab === "ketersediaan") {
@@ -1029,12 +1046,23 @@ function PatroliDetailContent() {
           cols.push({ header: 'Total Patuh', key: 'patuh', width: 15 });
           cols.push({ header: 'Total Tidak Patuh', key: 'tidak_patuh', width: 15 });
         }
-        cols.push({ header: 'Keterangan', key: 'keterangan', width: 30 });
+        cols.push({ header: 'Keterangan', key: 'keterangan', width: 35 });
 
-        sheet.columns = cols;
-
-        sheet.getRow(1).font = { bold: true };
-        sheet.getRow(1).alignment = { horizontal: 'center' };
+        // Gunakan baris 2 untuk header (karena baris 1 sudah dipakai title)
+        sheet.getRow(2).values = cols.map((c: any) => c.header);
+        sheet.getRow(2).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+        sheet.getRow(2).alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+        sheet.getRow(2).height = 30;
+        sheet.getRow(2).eachCell(cell => {
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFB71C1C' } };
+          cell.border = { bottom: { style: 'thin', color: { argb: 'FF999999' } } };
+        });
+        // Set column widths
+        cols.forEach((col: any, i: number) => {
+          sheet.getColumn(i + 1).key = col.key;
+          sheet.getColumn(i + 1).width = col.width;
+        });
+        // Data rows akan dimulai dari baris 3 (baris 1=title, baris 2=header)
 
         reportData.forEach((row, i) => {
           const rowData: any = {
@@ -1072,7 +1100,7 @@ function PatroliDetailContent() {
                     }
                     let compliant = row.jumlahKaryawan - nonCompliantCount;
                     if (compliant < 0) compliant = 0;
-                    ans = compliant.toString();
+                    ans = compliant.toString(); // angka saja, % hanya di kolom Total Patuh/Tidak Patuh
                     sumCompliant += compliant;
                     sumNonCompliant += (row.jumlahKaryawan - compliant);
                   } else {
@@ -1089,8 +1117,11 @@ function PatroliDetailContent() {
           if (activeApdTab === "ketersediaan") {
             rowData['rata'] = totalCount > 0 ? ((yaCount / totalCount) * 100).toFixed(0) + "%" : "-";
           } else {
-            rowData['patuh'] = sumCompliant.toString();
-            rowData['tidak_patuh'] = sumNonCompliant.toString();
+            const totalRow = sumCompliant + sumNonCompliant;
+            const patuhPct = totalRow > 0 ? Math.round((sumCompliant / totalRow) * 100) : 0;
+            const tidakPatuhPct = totalRow > 0 ? Math.round((sumNonCompliant / totalRow) * 100) : 0;
+            rowData['patuh'] = totalRow > 0 ? `${sumCompliant} (${patuhPct}%)` : "-";
+            rowData['tidak_patuh'] = totalRow > 0 ? `${sumNonCompliant} (${tidakPatuhPct}%)` : "-";
           }
 
           sheet.addRow(rowData);
@@ -1118,7 +1149,8 @@ function PatroliDetailContent() {
 
           let totalCompliantSum = 0;
           apdSummary?.forEach((s, i) => {
-            rowAvg[`p${i}`] = s.totalCompliant.toString();
+            const pct = s.totalKaryawan > 0 ? Math.round((s.totalCompliant / s.totalKaryawan) * 100) : 0;
+            rowAvg[`p${i}`] = s.totalKaryawan > 0 ? `${s.totalCompliant} (${pct}%)` : "-";
             totalCompliantSum += s.totalCompliant;
           });
 
@@ -1141,9 +1173,11 @@ function PatroliDetailContent() {
             });
           });
 
-          let denom = totalPegawai * 10;
-          rowAvg['patuh'] = totalCompliantSum.toString();
-          rowAvg['tidak_patuh'] = totalNonCompliantSum.toString();
+          let denom = totalCompliantSum + totalNonCompliantSum;
+          const patuhSumPct = denom > 0 ? Math.round((totalCompliantSum / denom) * 100) : 0;
+          const tidakSumPct = denom > 0 ? Math.round((totalNonCompliantSum / denom) * 100) : 0;
+          rowAvg['patuh'] = denom > 0 ? `${totalCompliantSum} (${patuhSumPct}%)` : "-";
+          rowAvg['tidak_patuh'] = denom > 0 ? `${totalNonCompliantSum} (${tidakSumPct}%)` : "-";
 
           sheet.addRow(rowAvg);
         }
@@ -1187,12 +1221,71 @@ function PatroliDetailContent() {
             const buffer = await qcRes.arrayBuffer();
             const imageId = workbook.addImage({ buffer, extension: 'png' });
             sheet.addImage(imageId, {
-              tl: { col: 1, row: reportData.length + 4 } as any,
-              br: { col: 7, row: reportData.length + 20 } as any
+              tl: { col: 1, row: reportData.length + 6 } as any,
+              br: { col: 7, row: reportData.length + 22 } as any
             });
           }
         } catch (e) {
           console.warn('Gagal load chart APD', e);
+        }
+        // --- CHART PROFESI MELANGGAR (hanya tab kepatuhan) ---
+        if (activeApdTab === "kepatuhan") {
+          const profesiCount: Record<string, number> = {};
+          // Kumpulkan tag dari semua submissions (profesi yang melanggar)
+          if (data?.submissions) {
+            for (const sub of data.submissions) {
+              if (sub.tags && sub.tags.length > 0) {
+                for (const tag of sub.tags) {
+                  let profesi = (tag as string).trim();
+                  if (!profesi) continue;
+                  if (profesi.toLowerCase() === "perawat") {
+                    profesi = `Perawat-${(sub as any).location || 'Tidak Diketahui'}`;
+                  }
+                  profesiCount[profesi] = (profesiCount[profesi] || 0) + 1;
+                }
+              }
+            }
+          }
+          const profesiItems = Object.entries(profesiCount)
+            .map(([name, count]) => ({ name, count }))
+            .sort((a, b) => b.count - a.count);
+
+          if (profesiItems.length > 0) {
+            const profesiChartConfig = {
+              type: 'bar',
+              data: {
+                labels: profesiItems.map(p => p.name.length > 15 ? p.name.substring(0, 15) + "..." : p.name),
+                datasets: [{
+                  label: 'Jumlah Pelanggaran',
+                  data: profesiItems.map(p => p.count),
+                  backgroundColor: profesiItems.map(p => p.name.toLowerCase().includes("perawat") ? '#B71C1C' : '#F59E0B')
+                }]
+              },
+              options: {
+                layout: { padding: { top: 20 } },
+                legend: { display: false },
+                title: { display: true, text: 'Statistik Profesi Melanggar', fontSize: 16 },
+                scales: { yAxes: [{ ticks: { min: 0, stepSize: 1 } }] },
+                plugins: {
+                  datalabels: { anchor: 'end', align: 'top', color: 'black', font: { weight: 'bold' } }
+                }
+              }
+            };
+            try {
+              const pQcUrl = `https://quickchart.io/chart?w=600&h=400&c=${encodeURIComponent(JSON.stringify(profesiChartConfig))}`;
+              const pQcRes = await fetch(pQcUrl);
+              if (pQcRes.ok) {
+                const buffer = await pQcRes.arrayBuffer();
+                const imgId2 = workbook.addImage({ buffer, extension: 'png' });
+                sheet.addImage(imgId2, {
+                  tl: { col: 8, row: reportData.length + 6 } as any,
+                  br: { col: 14, row: reportData.length + 26 } as any
+                });
+              }
+            } catch (e) {
+              console.warn('Gagal load chart profesi APD', e);
+            }
+          }
         }
 
       } else if (type === 'b3') {

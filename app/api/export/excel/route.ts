@@ -67,6 +67,7 @@ function jawabanDisplay(val: string, moduleSlug?: string): string {
   if (val === "Ya") return "✓ Ya";
   if (val === "Tidak") return moduleSlug === "sarana-proteksi" ? "✗ Tidak Ada" : "✗ Tidak";
   if (val === "Setengah") return "⚠️ Kurang Baik";
+  if (val === "TidakAda") return moduleSlug === "hydrant" ? "🚫 Tidak ada hydrant" : "✗ Tidak Ada";
   if (val === "N/A") return "N/A";
   return "-";
 }
@@ -426,6 +427,11 @@ export async function GET(request: Request) {
             return ans === "N/A" ? "N/A" : "-";
           }
 
+          // For modules with special jawaban (TidakAda, Setengah), return display text directly
+          if (ans === "TidakAda" || ans === "Setengah") {
+            return jawabanDisplay(ans, mod.slug);
+          }
+
           if (isAPAR || isLuarGedung) {
             const mRow = masterData.find((m: any) => m.Ruangan?.trim().toLowerCase() === (sub.location || "").trim().toLowerCase());
             let totalApar = 0;
@@ -700,14 +706,37 @@ export async function GET(request: Request) {
            qColIdx++;
         }
 
-        summaryRow.height = 35; // Taller to fit multi-line content
+        const isHydrantMod = mod.slug === "hydrant";
+        const isSaranaProteksiMod = mod.slug === "sarana-proteksi";
+        summaryRow.height = 45; // Taller to fit multi-line content
         for (const q of mod.questions) {
           const qr = aggregate.questionResults.find((res) => res.question.sheetHeader === q.sheetHeader);
           if (qr && qr.pct !== null) {
-            const total = qr.countYa + qr.countTidak;
-            const yaPct = total > 0 ? Math.round((qr.countYa / total) * 100) : 0;
-            const tidakPct = total > 0 ? Math.round((qr.countTidak / total) * 100) : 0;
-            summaryRow.getCell(qColIdx).value = `Ya: ${qr.countYa} (${yaPct}%)\nTidak: ${qr.countTidak} (${tidakPct}%)`;
+            if (isSaranaProteksiMod) {
+              // Sarana Proteksi: Ya / Kurang Baik / Tidak Ada
+              const countSetengah = qr.countSetengah ?? 0;
+              const countTidakAda = qr.countTidakAda ?? 0;
+              const total = qr.countYa + countSetengah + countTidakAda;
+              const yaPct = total > 0 ? Math.round((qr.countYa / total) * 100) : 0;
+              const setengahPct = total > 0 ? Math.round((countSetengah / total) * 100) : 0;
+              const tidakPct = total > 0 ? Math.round((countTidakAda / total) * 100) : 0;
+              summaryRow.getCell(qColIdx).value =
+                `✓ Ya: ${qr.countYa} (${yaPct}%)\n⚠️ Kurang Baik: ${countSetengah} (${setengahPct}%)\n✗ Tidak Ada: ${countTidakAda} (${tidakPct}%)`;
+            } else if (isHydrantMod) {
+              // Hydrant: Ya / Tidak / Tidak ada hydrant
+              const countTidakAda = qr.countTidakAda ?? 0;
+              const total = qr.countYa + qr.countTidak + countTidakAda;
+              const yaPct = total > 0 ? Math.round((qr.countYa / total) * 100) : 0;
+              const tidakPct = total > 0 ? Math.round((qr.countTidak / total) * 100) : 0;
+              const tidakAdaPct = total > 0 ? Math.round((countTidakAda / total) * 100) : 0;
+              summaryRow.getCell(qColIdx).value =
+                `✓ Ya: ${qr.countYa} (${yaPct}%)\n✗ Tidak: ${qr.countTidak} (${tidakPct}%)\n🚫 Tdk ada hydrant: ${countTidakAda} (${tidakAdaPct}%)`;
+            } else {
+              const total = qr.countYa + qr.countTidak;
+              const yaPct = total > 0 ? Math.round((qr.countYa / total) * 100) : 0;
+              const tidakPct = total > 0 ? Math.round((qr.countTidak / total) * 100) : 0;
+              summaryRow.getCell(qColIdx).value = `Ya: ${qr.countYa} (${yaPct}%)\nTidak: ${qr.countTidak} (${tidakPct}%)`;
+            }
           } else {
             summaryRow.getCell(qColIdx).value = "-";
           }
