@@ -20,7 +20,7 @@ export const dynamic = 'force-dynamic';
 
 import { MODULES, MODULE_BY_SLUG } from "@/lib/modules";
 import { computeModuleAggregate } from "@/lib/analytics";
-import { getCurrentBulan, formatBulan, formatMaybeDate } from "@/lib/utils";
+import { getCurrentBulan, formatBulan, formatTanggal, formatMaybeDate } from "@/lib/utils";
 
 const HEADER_FILL: ExcelJS.Fill = {
   type: "pattern",
@@ -513,7 +513,7 @@ export async function GET(request: Request) {
 
         const vals: (string | number)[] = [
           dataIdx,
-          sub.row.tanggalPemantauan || sub.row.timestamp,
+          formatTanggal(sub.row.tanggalPemantauan || sub.row.timestamp),
           sub.row.namaPetugas,
           sub.location || "-",
           sub.row.patroliKe || "-",

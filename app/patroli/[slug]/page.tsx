@@ -986,169 +986,10 @@ function PatroliDetailContent() {
     if (!data) return;
     setDownloading(true);
     try {
-      // 1. Ambil Excel dari API (data tabel, summary, chart quickchart)
       let url = `/api/export/excel?slug=${slug}&bulan=${bulan}&ruangan=${encodeURIComponent(ruangan)}`;
       const res = await fetch(url);
       if (!res.ok) throw new Error("Gagal mengunduh Excel");
-      const apiBuffer = await res.arrayBuffer();
-
-      // 2. Buka workbook dari API
-      const ExcelJS = (await import('exceljs')).default;
-      const apiWorkbook = new ExcelJS.Workbook();
-      await apiWorkbook.xlsx.load(apiBuffer);
-
-      // 3. Buat workbook baru — snapshot sheet di posisi PERTAMA
-      const html2canvas = (await import('html2canvas')).default;
-      await new Promise(r => setTimeout(r, 600)); // tunggu render selesai
-
-      const outWorkbook = new ExcelJS.Workbook();
-      outWorkbook.creator = 'K3 RSOMH';
-
-      // Helper: ubah base64 dataURL ke ArrayBuffer (browser-safe, ExcelJS-compatible)
-      const dataUrlToArrayBuffer = (dataUrl: string): ArrayBuffer => {
-        const base64 = dataUrl.split(',')[1];
-        const binaryString = atob(base64);
-        const bytes = new Uint8Array(binaryString.length);
-        for (let i = 0; i < binaryString.length; i++) {
-          bytes[i] = binaryString.charCodeAt(i);
-        }
-        return bytes.buffer;
-      };
-
-      // ── Helper: capture element dengan ukuran tetap & selalu light mode ──
-      const captureElement = async (el: HTMLElement): Promise<HTMLCanvasElement> => {
-        // 1. Paksa light mode: hapus class 'dark' dari <html> sementara
-        const htmlEl = document.documentElement;
-        const wasDark = htmlEl.classList.contains('dark');
-        if (wasDark) htmlEl.classList.remove('dark');
-
-        // 2. Clone element dan paksa lebar tetap 960px (konsisten di semua ukuran layar)
-        const FIXED_WIDTH = 960;
-        const clone = el.cloneNode(true) as HTMLElement;
-        clone.style.position = 'fixed';
-        clone.style.top = '-9999px';
-        clone.style.left = '-9999px';
-        clone.style.width = `${FIXED_WIDTH}px`;
-        clone.style.maxWidth = `${FIXED_WIDTH}px`;
-        clone.style.background = '#ffffff';
-        clone.style.color = '#111827';
-        document.body.appendChild(clone);
-
-        try {
-          await new Promise(r => setTimeout(r, 200)); // tunggu clone dirender
-          const canvas = await html2canvas(clone, {
-            scale: 2,
-            backgroundColor: '#ffffff',
-            useCORS: true,
-            width: FIXED_WIDTH,
-            windowWidth: FIXED_WIDTH,
-            logging: false,
-          });
-          return canvas;
-        } finally {
-          document.body.removeChild(clone);
-          // 3. Kembalikan dark mode jika sebelumnya aktif
-          if (wasDark) htmlEl.classList.add('dark');
-        }
-      };
-
-      // ── Sheet 1: Grafik Dashboard ──
-      const snapshotSheet = outWorkbook.addWorksheet('📊 Grafik Dashboard');
-      snapshotSheet.getColumn(1).width = 12;
-      snapshotSheet.mergeCells('A1:K1');
-      const titleCell = snapshotSheet.getCell('A1');
-      titleCell.value = `📊 Grafik Dashboard — ${moduleDef.title} — ${bulan}`;
-      titleCell.font = { bold: true, size: 14, color: { argb: 'FFB71C1C' } };
-      titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
-      snapshotSheet.getRow(1).height = 28;
-
-      let currentRow = 3;
-
-      // Capture chart Kepatuhan Per Pertanyaan
-      const chartEl = document.getElementById('chart-per-pertanyaan');
-      if (chartEl && !moduleDef.logOnly) {
-        try {
-          snapshotSheet.getCell(`A${currentRow}`).value = '📊 Kepatuhan Per Pertanyaan';
-          snapshotSheet.getCell(`A${currentRow}`).font = { bold: true, size: 11 };
-          currentRow += 1;
-
-          const canvas1 = await captureElement(chartEl);
-          const imgBytes1 = dataUrlToArrayBuffer(canvas1.toDataURL('image/png'));
-          const imgId1 = outWorkbook.addImage({ buffer: imgBytes1 as any, extension: 'png' });
-
-          const aspectRatio = canvas1.height / canvas1.width;
-          const imgHeightRows = Math.ceil(aspectRatio * 40);
-
-          snapshotSheet.addImage(imgId1, {
-            tl: { col: 0, row: currentRow - 1 } as any,
-            br: { col: 11, row: currentRow - 1 + imgHeightRows } as any,
-          });
-          currentRow += imgHeightRows + 2;
-        } catch (e) {
-          console.warn('Gagal capture chart per pertanyaan', e);
-        }
-      }
-
-      // Capture chart Profesi Melanggar (hanya APD)
-      const profesiEl = document.getElementById('chart-profesi-melanggar');
-      if (profesiEl && slug === 'apd') {
-        try {
-          snapshotSheet.getCell(`A${currentRow}`).value = '📊 Statistik Profesi Melanggar';
-          snapshotSheet.getCell(`A${currentRow}`).font = { bold: true, size: 11 };
-          currentRow += 1;
-
-          const canvas2 = await captureElement(profesiEl);
-          const imgBytes2 = dataUrlToArrayBuffer(canvas2.toDataURL('image/png'));
-          const imgId2 = outWorkbook.addImage({ buffer: imgBytes2 as any, extension: 'png' });
-
-          const aspectRatio2 = canvas2.height / canvas2.width;
-          const imgHeightRows2 = Math.ceil(aspectRatio2 * 40);
-
-          snapshotSheet.addImage(imgId2, {
-            tl: { col: 0, row: currentRow - 1 } as any,
-            br: { col: 11, row: currentRow - 1 + imgHeightRows2 } as any,
-          });
-          currentRow += imgHeightRows2 + 2;
-        } catch (e) {
-          console.warn('Gagal capture chart profesi', e);
-        }
-      }
-
-
-      // ── Sheet berikutnya: salin semua sheet dari API workbook ──
-      // Re-serialize API workbook menjadi buffer lalu embed sebagai sheet terpisah
-      // Cara paling aman: download dua file terpisah tidak ideal, jadi kita gabung dengan workaround:
-      // Tulis ulang API workbook data ke outWorkbook secara manual per sheet
-      apiWorkbook.eachSheet((ws) => {
-        const newWs = outWorkbook.addWorksheet(ws.name);
-        ws.eachRow({ includeEmpty: false }, (row, rowNumber) => {
-          const newRow = newWs.getRow(rowNumber);
-          row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
-            const newCell = newRow.getCell(colNumber);
-            newCell.value = cell.value;
-            if (cell.font) newCell.font = { ...cell.font };
-            if (cell.fill) newCell.fill = { ...cell.fill } as any;
-            if (cell.alignment) newCell.alignment = { ...cell.alignment };
-            if (cell.border) newCell.border = { ...cell.border };
-            if (cell.numFmt) newCell.numFmt = cell.numFmt;
-          });
-          newRow.height = row.height || 15;
-          newRow.commit();
-        });
-        // Copy column widths
-        ws.columns.forEach((col, i) => {
-          if (col.width) newWs.getColumn(i + 1).width = col.width;
-        });
-        // Copy merged cells
-        (ws as any).mergeCells && (ws as any)._merges &&
-          Object.keys((ws as any)._merges || {}).forEach(mergeRef => {
-            try { newWs.mergeCells(mergeRef); } catch(_) {}
-          });
-      });
-
-      // 4. Download
-      const outBuffer = await outWorkbook.xlsx.writeBuffer();
-      const blob = new Blob([outBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const blob = await res.blob();
       let filename = `K3_RSOMH_${slug.toUpperCase()}_${bulan}.xlsx`;
       if (slug === "pcra" && data.submissions && data.submissions.length > 0) {
         const topicName = data.submissions[0].extras?.find(e => e.label === "Topik")?.value || "";
@@ -1164,7 +1005,6 @@ function PatroliDetailContent() {
       setDownloading(false);
     }
   };
-
 
   const handleExportDetailExcel = async (type: 'apd' | 'b3' | 'elektrik') => {
     setDownloading(true);

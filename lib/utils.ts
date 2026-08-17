@@ -13,10 +13,26 @@ export function formatTanggal(input: string | Date): string {
   if (input instanceof Date) {
     d = input;
   } else {
-    // Try Google Sheets format: M/D/YYYY or M/D/YYYY H:MM:SS
+    // Handle formats like DD/MM/YYYY or MM/DD/YYYY from Google Sheets
     const gsMatch = String(input).match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
     if (gsMatch) {
-      d = new Date(parseInt(gsMatch[3]), parseInt(gsMatch[1]) - 1, parseInt(gsMatch[2]));
+      let part1 = parseInt(gsMatch[1]);
+      let part2 = parseInt(gsMatch[2]);
+      let year = parseInt(gsMatch[3]);
+      
+      // If part1 > 12, it MUST be DD/MM/YYYY. 
+      // If part2 > 12, it MUST be MM/DD/YYYY.
+      // Default to assuming DD/MM/YYYY for Indonesian users if both <= 12, unless part1 looks like a US month.
+      let month = part2;
+      let day = part1;
+      
+      // If part1 is a valid month and part2 is > 12, it's definitely MM/DD/YYYY
+      if (part1 <= 12 && part2 > 12) {
+         month = part1;
+         day = part2;
+      }
+      
+      d = new Date(year, month - 1, day);
     } else {
       d = new Date(input);
     }
