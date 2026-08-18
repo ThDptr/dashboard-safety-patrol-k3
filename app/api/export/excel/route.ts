@@ -724,13 +724,16 @@ export async function GET(request: Request) {
                 `✓ Ya: ${qr.countYa} (${yaPct}%)\n⚠️ Kurang Baik: ${countSetengah} (${setengahPct}%)\n✗ Tidak Ada: ${countTidakAda} (${tidakPct}%)`;
             } else if (isHydrantMod) {
               // Hydrant: Ya / Tidak / Tidak ada hydrant
+              // CATATAN: qr.countTidak sudah termasuk TidakAda (analytics menghitung TidakAda sebagai tidak)
+              // Sama dengan logika dashboard (SubmissionTable & QuestionHorizontalChart): countTidakOnly = countTidak - countTidakAda
               const countTidakAda = qr.countTidakAda ?? 0;
-              const total = qr.countYa + qr.countTidak + countTidakAda;
+              const countTidakOnly = qr.countTidak - countTidakAda; // actual "Tidak" (tanpa TidakAda)
+              const total = qr.countYa + qr.countTidak; // total benar (countTidak sudah termasuk TidakAda)
               const yaPct = total > 0 ? Math.round((qr.countYa / total) * 100) : 0;
-              const tidakPct = total > 0 ? Math.round((qr.countTidak / total) * 100) : 0;
+              const tidakPct = total > 0 ? Math.round((countTidakOnly / total) * 100) : 0;
               const tidakAdaPct = total > 0 ? Math.round((countTidakAda / total) * 100) : 0;
               summaryRow.getCell(qColIdx).value =
-                `✓ Ya: ${qr.countYa} (${yaPct}%)\n✗ Tidak: ${qr.countTidak} (${tidakPct}%)\n🚫 Tdk ada hydrant: ${countTidakAda} (${tidakAdaPct}%)`;
+                `✓ Ya: ${qr.countYa} (${yaPct}%)\n✗ Tidak: ${countTidakOnly} (${tidakPct}%)\n🚫 Tdk ada hydrant: ${countTidakAda} (${tidakAdaPct}%)`;
             } else {
               const total = qr.countYa + qr.countTidak;
               const yaPct = total > 0 ? Math.round((qr.countYa / total) * 100) : 0;
