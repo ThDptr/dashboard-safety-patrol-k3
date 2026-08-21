@@ -217,9 +217,6 @@ function DashboardContent() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
-  const [aiSummary, setAiSummary] = useState<string | null>(null);
-  const [generatingAi, setGeneratingAi] = useState(false);
-  const [aiContext, setAiContext] = useState("");
   const [isMonthLocked, setIsMonthLocked] = useState(false);
 
   const abortRef = useRef<AbortController | null>(null);
@@ -265,7 +262,6 @@ function DashboardContent() {
     };
   }, [fetchData]);
 
-  // Cek apakah bulan yang dipilih sudah dikunci (data historis)
   useEffect(() => {
     let cancelled = false;
     fetch("/api/locked-months")
@@ -278,47 +274,6 @@ function DashboardContent() {
       .catch(() => {});
     return () => { cancelled = true; };
   }, [bulan]);
-
-  const handleGenerateSummary = async () => {
-    if (!data) return;
-    setGeneratingAi(true);
-    setAiSummary(null);
-
-    // Simplify data payload to reduce token usage
-    const payloadData = {
-      jenisLaporan: "Dashboard Keseluruhan",
-      bulan: formatBulan(bulan),
-      totalSubmissions: data.totalSubmissions,
-      userContext: aiContext,
-      ringkasanModul: data.summaries.map(s => ({
-        modul: s.title,
-        kepatuhan: s.pctThisMonth,
-        temuanBermasalah: s.needsAttentionCount
-      })),
-      daftarPerhatian: data.needsAttention.map(g => ({
-        modul: g.moduleTitle,
-        totalTemuan: g.items.length,
-        lokasiTemuan: Array.from(new Set(g.items.map(i => i.location)))
-      }))
-    };
-
-    try {
-      const res = await fetch("/api/generate-summary", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ data: payloadData }),
-        cache: "no-store"
-      });
-      if (!res.ok) throw new Error("Gagal generate ringkasan AI");
-      const json = await res.json();
-      setAiSummary(json.summary);
-    } catch (e) {
-      console.error(e);
-      alert("Gagal membuat ringkasan AI.");
-    } finally {
-      setGeneratingAi(false);
-    }
-  };
 
   const handleExportAll = async () => {
     setDownloading(true);
@@ -362,14 +317,6 @@ function DashboardContent() {
             />
             <LockMonthButton bulan={bulan} />
           </div>
-
-          <button
-            onClick={handleGenerateSummary}
-            disabled={generatingAi || loading || !data}
-            className="btn-primary bg-indigo-600 hover:bg-indigo-700 text-sm disabled:opacity-50 border-indigo-600 hover:border-indigo-700 shadow-md shadow-indigo-500/20"
-          >
-            {generatingAi ? "⏳" : "✨"} AI Summary
-          </button>
 
           <button
             onClick={handleExportAll}
@@ -417,57 +364,7 @@ function DashboardContent() {
       {/* ── Main Data ── */}
       {(!loading || data) && !error && (
         <>
-          {/* ── AI Summary Result ── */}
-          {(aiSummary || generatingAi) && (
-            <div className="card p-6 border-l-4 border-l-indigo-500 bg-indigo-50/50 dark:bg-indigo-900/10 mb-6">
-              <div className="flex items-center gap-2 mb-4">
-                <span className="text-indigo-600 dark:text-indigo-400 text-xl">✨</span>
-                <h2 className="text-lg font-bold text-gray-800 dark:text-gray-100">Ringkasan Eksekutif AI (Keseluruhan)</h2>
-              </div>
-              {generatingAi ? (
-                <div className="animate-pulse space-y-3">
-                  <div className="h-4 bg-gray-200 dark:bg-slate-700 rounded w-3/4"></div>
-                  <div className="h-4 bg-gray-200 dark:bg-slate-700 rounded w-full"></div>
-                  <div className="h-4 bg-gray-200 dark:bg-slate-700 rounded w-5/6"></div>
-                  <div className="h-4 bg-gray-200 dark:bg-slate-700 rounded w-1/2 mt-4"></div>
-                </div>
-              ) : (
-                <div className="text-sm text-gray-700 dark:text-gray-300 space-y-4 whitespace-pre-wrap leading-relaxed">
-                  {aiSummary}
 
-                  {/* Bagian Catatan / Interaksi Lanjutan AI */}
-                  <div className="mt-6 pt-4 border-t border-indigo-100 dark:border-indigo-800/30">
-                    <label className="block text-xs font-semibold text-indigo-700 dark:text-indigo-400 mb-2">
-                      Tambahkan catatan atau ubah sudut pandang AI:
-                    </label>
-                    <div className="flex gap-2">
-                      <textarea
-                        rows={2}
-                        value={aiContext}
-                        onChange={(e) => setAiContext(e.target.value)}
-                        placeholder="Contoh: Fokuskan pada bahaya api, atau beri alasan ruangan farmasi kotor..."
-                        className="form-control text-sm w-full bg-white dark:bg-slate-800 resize-y"
-                        disabled={generatingAi}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' && !e.shiftKey) {
-                            e.preventDefault();
-                            handleGenerateSummary();
-                          }
-                        }}
-                      />
-                      <button
-                        onClick={handleGenerateSummary}
-                        disabled={generatingAi || loading}
-                        className="btn-primary bg-indigo-600 hover:bg-indigo-700 text-sm disabled:opacity-50 whitespace-nowrap"
-                      >
-                        Perbarui Ringkasan
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
 
           {/* ── Overview Cards ── */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">

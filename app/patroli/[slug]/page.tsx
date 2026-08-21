@@ -5,7 +5,7 @@ import LockMonthButton from "@/components/LockMonthButton";
 import { useParams, useRouter, useSearchParams, usePathname } from "next/navigation";
 import Link from "next/link";
 import dynamic from "next/dynamic";
-import { MODULE_BY_SLUG } from "@/lib/modules";
+import { MODULE_BY_SLUG, HARIAN_SLUGS, HARIAN_ABBREV, type HarianSlug } from "@/lib/modules";
 import { formatBulan, formatTimestamp, getCurrentBulan, formatTanggal, downloadWithSavePrompt } from "@/lib/utils";
 import SubmissionTable from "@/components/SubmissionTable";
 import LoadingScreen from "@/components/LoadingScreen";
@@ -132,11 +132,28 @@ function PatroliDetailContent() {
   const [data, setData] = useState<ModuleData | null>(null);
   const [masterData, setMasterData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isBgRefreshing, setIsBgRefreshing] = useState(false); // background refresh indicator
   const [error, setError] = useState<string | null>(null);
+
+  // ─── Client-side SWR cache (sessionStorage) ───────────────────────────────
+  // Key: slug + bulan + ruangan, Value: serialized ModuleData JSON
+  // Tujuan: tampilkan data lama LANGSUNG saat filter berubah, fetch baru di background
+  const SWR_CACHE_PREFIX = "patrol_swr_";
+  const getCacheKey = (s: string, b: string, r: string) => `${SWR_CACHE_PREFIX}${s}_${b}_${r}`;
+
+  const readCache = (key: string): ModuleData | null => {
+    try {
+      const raw = sessionStorage.getItem(key);
+      if (!raw) return null;
+      return JSON.parse(raw);
+    } catch { return null; }
+  };
+
+  const writeCache = (key: string, payload: ModuleData) => {
+    try { sessionStorage.setItem(key, JSON.stringify(payload)); } catch { /* quota full, skip */ }
+  };
+  // ────────────────────────────────────────────────────────────────────────────────
   const [downloading, setDownloading] = useState(false);
-  const [aiSummary, setAiSummary] = useState<string | null>(null);
-  const [generatingAi, setGeneratingAi] = useState(false);
-  const [aiContext, setAiContext] = useState("");
   const [activeApdTab, setActiveApdTab] = useState<"ketersediaan" | "kepatuhan">("ketersediaan");
   const [activeB3Tab, setActiveB3Tab] = useState<"a" | "b" | "c">("a");
   const [activeElektrikTab, setActiveElektrikTab] = useState<"a" | "b">("a");
@@ -514,11 +531,21 @@ function PatroliDetailContent() {
         .filter(Boolean)
         .join(" ; ") || "-";
 
+      const photos = top10
+        .map((p, idx) => {
+          if (p.photoUrl && p.photoUrl.trim() !== "" && p.photoUrl !== "-") {
+            return { url: p.photoUrl, label: `P${idx + 1}` };
+          }
+          return null;
+        })
+        .filter(Boolean);
+
       return {
         ruangan,
         tanggal,
         namaPetugas,
         keterangan,
+        photos,
         patrols: top10,
       };
     }).filter(d => d.patrols.length > 0);
@@ -832,6 +859,64 @@ function PatroliDetailContent() {
     return summary;
   }, [slug, elektrikReportData]);
 
+  // ─── Harian Horizontal Table Data (Evakuasi, Kebersihan, Risiko, Sampah, Code Red) ───
+  const harianReportData = useMemo(() => {
+    if (!HARIAN_SLUGS.includes(slug as HarianSlug) || !masterData.length || !data?.submissions) return [];
+
+    const masterFisik = masterData.filter((m: any) => !m.Ruangan?.startsWith('**'));
+    return masterFisik.map((master: any) => {
+      const ruangan = master.Ruangan;
+      const roomPatrols = groupedSubmissionsByLoc[(ruangan || "").toLowerCase()] || [];
+      const top10 = roomPatrols.slice(-10);
+      const latestPatrol = top10.length > 0 ? top10[top10.length - 1] : null;
+      const tanggal = latestPatrol ? formatTanggal(latestPatrol.tanggalPemantauan || latestPatrol.timestamp) : "-";
+      const namaPetugas = Array.from(new Set(
+        top10.map((p: any) => p.namaPetugas).filter((n: any) => typeof n === 'string' && n.trim() !== "" && n !== "-")
+      )).join(", ") || "-";
+      const keterangan = top10
+        .map((p: any, idx: number) => {
+          const ket = buildPatrolKeterangan(p);
+          return ket ? `P${idx + 1}: ${ket}` : null;
+        })
+        .filter(Boolean)
+        .join(" ; ") || "-";
+      const photos = top10
+        .map((p: any, idx: number) => {
+          if (p.photoUrl && p.photoUrl.trim() !== "" && p.photoUrl !== "-") {
+            return { url: p.photoUrl, label: `P${idx + 1}` };
+          }
+          return null;
+        })
+        .filter(Boolean);
+
+      return { ruangan, tanggal, namaPetugas, keterangan, photos, patrols: top10 };
+    }).filter((d: any) => d.patrols.length > 0);
+  }, [slug, masterData, data?.submissions, groupedSubmissionsByLoc]);
+
+  // Footer summary: [patroli0_q0, patroli0_q1, ..., patroli9_qN]
+  const harianSummary = useMemo(() => {
+    const abbrevs = HARIAN_ABBREV[slug as HarianSlug];
+    if (!abbrevs || !harianReportData.length) return null;
+    const questions = MODULE_BY_SLUG[slug]?.questions ?? [];
+    const nQ = questions.length;
+    const summary = Array(10 * nQ).fill(null).map(() => ({ ya: 0, tidak: 0, na: 0 }));
+    harianReportData.forEach((row: any) => {
+      [...Array(10)].forEach((_, colIdx) => {
+        const p = row.patrols[colIdx];
+        if (!p) return;
+        questions.forEach((q: any, qIdx: number) => {
+          const ans = p.answers?.find((a: any) => a.sheetHeader === q.sheetHeader || a.label === q.label);
+          if (!ans) return;
+          const slot = colIdx * nQ + qIdx;
+          if (ans.jawaban === "Ya") summary[slot].ya++;
+          else if (ans.jawaban === "Tidak") summary[slot].tidak++;
+          else if (ans.jawaban === "N/A") summary[slot].na++;
+        });
+      });
+    });
+    return summary;
+  }, [slug, harianReportData]);
+
   const setBulan = (newBulan: string) => {
     const newParams = new URLSearchParams(searchParams.toString());
     newParams.set("bulan", newBulan);
@@ -855,9 +940,23 @@ function PatroliDetailContent() {
     const controller = new AbortController();
     abortRef.current = controller;
 
+    const cacheKey = getCacheKey(slug, bulan, ruangan + (startDate && endDate ? `_${startDate}_${endDate}` : ""));
+
     const doFetch = async () => {
-      setLoading(true);
+      // ── Stale-While-Revalidate: tampilkan cache lama dulu ──
+      const cached = readCache(cacheKey);
+      if (cached) {
+        // Langsung tampilkan data lama → tidak loading penuh, hanya bg refresh
+        setData(cached);
+        const cachedAny = cached as any;
+        if (cachedAny.masterData?.length) setMasterData(cachedAny.masterData);
+        setLoading(false);
+        setIsBgRefreshing(true);
+      } else {
+        setLoading(true);
+      }
       setError(null);
+
       try {
         let url = `/api/patrol-data?mode=module&slug=${slug}&bulan=${bulan}`;
         if (ruangan) url += `&ruangan=${encodeURIComponent(ruangan)}`;
@@ -871,22 +970,22 @@ function PatroliDetailContent() {
         
         const json = await res.json();
 
-        // Only update state if this request was NOT aborted
         if (!controller.signal.aborted) {
           setData(json);
-          if (json.masterData) {
-            setMasterData(json.masterData);
-          }
+          if (json.masterData) setMasterData(json.masterData);
+          // Simpan ke cache untuk request berikutnya
+          writeCache(cacheKey, json);
         }
       } catch (e: any) {
-        // Ignore AbortError — it's expected when switching tabs/filters
         if (e.name === 'AbortError') return;
         if (!controller.signal.aborted) {
-          setError(e.message || "Error");
+          // Jika ada cache lama, jangan tampilkan error — data lama masih valid
+          if (!cached) setError(e.message || "Error");
         }
       } finally {
         if (!controller.signal.aborted) {
           setLoading(false);
+          setIsBgRefreshing(false);
         }
       }
     };
@@ -898,18 +997,19 @@ function PatroliDetailContent() {
     };
   }, [slug, bulan, ruangan, startDate, endDate]);
 
-  // Manual refresh: triggers the useEffect above by nudging startDate
+  // Manual refresh: invalidate cache dan fetch ulang
   const fetchData = useCallback(() => {
-    // Force the useEffect to re-run by toggling a micro-state change
-    setStartDate(prev => prev === "" ? "" : prev);
-    setEndDate(prev => prev === "" ? "" : prev);
-    // Since the deps didn't actually change, we need to abort+re-fetch manually
+    // Hapus cache untuk key saat ini agar fetch segar
+    const cacheKey = getCacheKey(slug, bulan, ruangan + (startDate && endDate ? `_${startDate}_${endDate}` : ""));
+    try { sessionStorage.removeItem(cacheKey); } catch { /* ignore */ }
+
     if (abortRef.current) abortRef.current.abort();
     const controller = new AbortController();
     abortRef.current = controller;
 
     setLoading(true);
     setError(null);
+    setIsBgRefreshing(false);
 
     let url = `/api/patrol-data?mode=module&slug=${slug}&bulan=${bulan}`;
     if (ruangan) url += `&ruangan=${encodeURIComponent(ruangan)}`;
@@ -924,6 +1024,7 @@ function PatroliDetailContent() {
         if (!controller.signal.aborted) {
           setData(json);
           if (json.masterData) setMasterData(json.masterData);
+          writeCache(cacheKey, json);
         }
       })
       .catch(e => {
@@ -935,52 +1036,7 @@ function PatroliDetailContent() {
       });
   }, [slug, bulan, ruangan, startDate, endDate]);
 
-  const handleGenerateSummary = async () => {
-    if (!data || data.submissions.length === 0) return;
-    setGeneratingAi(true);
-    setAiSummary(null);
 
-    // Simplify data payload to reduce token usage
-    const payloadData = {
-      module: data.module.title,
-      bulan: formatBulan(bulan),
-      ruanganFilter: ruangan || "Semua",
-      totalKepatuhan: data.totalPct,
-      userContext: aiContext,
-      ringkasanPertanyaan: data.questionResults.map(q => ({
-        pertanyaan: q.label,
-        kepatuhanPersen: q.pct,
-        ya: q.countYa,
-        tidak: q.countTidak
-      })),
-      detailTemuan: data.submissions
-        .filter(s => s.answers.some(a => a.jawaban === "Tidak") || s.description)
-        .map(s => ({
-          tanggal: s.tanggalPemantauan,
-          ruangan: s.ruangan,
-          petugas: s.namaPetugas,
-          catatan: s.description,
-          jawabanTidak: s.answers.filter(a => a.jawaban === "Tidak").map(a => a.label)
-        }))
-    };
-
-    try {
-      const res = await fetch("/api/generate-summary", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ data: payloadData }),
-        cache: "no-store"
-      });
-      if (!res.ok) throw new Error("Gagal generate ringkasan AI");
-      const json = await res.json();
-      setAiSummary(json.summary);
-    } catch (e) {
-      console.error(e);
-      alert("Gagal membuat ringkasan AI. Pastikan API key sudah diatur dengan benar.");
-    } finally {
-      setGeneratingAi(false);
-    }
-  };
 
   const handleExportExcel = async () => {
     if (!data) return;
@@ -1006,7 +1062,7 @@ function PatroliDetailContent() {
     }
   };
 
-  const handleExportDetailExcel = async (type: 'apd' | 'b3' | 'elektrik') => {
+  const handleExportDetailExcel = async (type: 'apd' | 'b3' | 'elektrik' | 'harian') => {
     setDownloading(true);
     try {
       const ExcelJS = (await import('exceljs')).default;
@@ -1512,56 +1568,84 @@ function PatroliDetailContent() {
           console.warn('Gagal load chart B3', e);
         }
 
-      } else if (type === 'elektrik') {
+      } else if (type === 'harian') {
+        // ── Harian: Evakuasi, Kebersihan, Risiko, Sampah, Code Red ──
+        const questions = MODULE_BY_SLUG[slug]?.questions ?? [];
+        const abbrevs = HARIAN_ABBREV[slug as HarianSlug] ?? [];
+        const nQ = questions.length;
+        const moduleTitle = MODULE_BY_SLUG[slug]?.title ?? slug;
+
+        // Bangun kolom
         const cols: any[] = [
           { key: 'no', width: 5 },
           { key: 'tanggal', width: 15 },
-          { key: 'petugas', width: 20 },
-          { key: 'ruangan', width: 25 },
+          { key: 'petugas', width: 22 },
+          { key: 'ruangan', width: 28 },
         ];
-
-        for (let i = 1; i <= 10; i++) {
-          cols.push({ key: `p${i}_a`, width: 12 });
-          cols.push({ key: `p${i}_b`, width: 12 });
+        for (let p = 1; p <= 10; p++) {
+          for (let q = 0; q < nQ; q++) {
+            cols.push({ key: `p${p}_q${q}`, width: 10 });
+          }
         }
-        cols.push({ key: 'rata', width: 15 });
-        cols.push({ key: 'keterangan', width: 30 });
-
+        cols.push({ key: 'rata', width: 14 });
+        cols.push({ key: 'keterangan', width: 35 });
         sheet.columns = cols;
 
-        let row1 = ['No', 'Tanggal', 'Nama Petugas', 'Ruangan'];
-        let row2 = ['', '', '', ''];
-
-        for (let i = 1; i <= 10; i++) {
-          row1.push(`Patroli Ke-${i}`, '');
-          row2.push('Kabel', 'Sambungan');
+        // Baris header 1: No, Tgl, Petugas, Ruangan | Patroli Ke-1 (colspan nQ) | ... | Rata-rata | Keterangan
+        const row1: string[] = ['No', 'Tanggal', 'Nama Petugas', 'Ruangan'];
+        for (let p = 1; p <= 10; p++) {
+          row1.push(`Patroli Ke-${p}`);
+          for (let q = 1; q < nQ; q++) row1.push('');
         }
-
         row1.push('Rata-rata', 'Keterangan');
+
+        // Baris header 2: singkatan per pertanyaan
+        const row2: string[] = ['', '', '', ''];
+        for (let p = 1; p <= 10; p++) {
+          abbrevs.forEach(a => row2.push(a));
+        }
         row2.push('', '');
 
         sheet.addRow(row1);
         sheet.addRow(row2);
 
+        // Merge header
         sheet.mergeCells('A1:A2');
         sheet.mergeCells('B1:B2');
         sheet.mergeCells('C1:C2');
         sheet.mergeCells('D1:D2');
-
-        let startCol = 5;
-        for (let i = 1; i <= 10; i++) {
-          sheet.mergeCells(1, startCol, 1, startCol + 1);
-          startCol += 2;
+        let hCol = 5;
+        for (let p = 1; p <= 10; p++) {
+          if (nQ > 1) sheet.mergeCells(1, hCol, 1, hCol + nQ - 1);
+          else sheet.mergeCells(1, hCol, 2, hCol);
+          hCol += nQ;
         }
-        sheet.mergeCells(1, startCol, 2, startCol); // Rata-rata
-        sheet.mergeCells(1, startCol + 1, 2, startCol + 1); // Keterangan
+        sheet.mergeCells(1, hCol, 2, hCol);     // Rata-rata
+        sheet.mergeCells(1, hCol + 1, 2, hCol + 1); // Keterangan
 
-        sheet.getRow(1).font = { bold: true };
-        sheet.getRow(2).font = { bold: true };
-        sheet.getRow(1).alignment = { horizontal: 'center', vertical: 'middle' };
-        sheet.getRow(2).alignment = { horizontal: 'center', vertical: 'middle' };
+        const headerStyle = {
+          font: { bold: true, color: { argb: 'FFFFFFFF' } } as any,
+          fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1565C0' } } as any,
+          alignment: { horizontal: 'center', vertical: 'middle', wrapText: true } as any,
+          border: { bottom: { style: 'thin', color: { argb: 'FF90CAF9' } } } as any,
+        };
+        [1, 2].forEach(rIdx => {
+          sheet.getRow(rIdx).height = 22;
+          sheet.getRow(rIdx).eachCell(cell => Object.assign(cell, headerStyle));
+        });
 
-        elektrikReportData.forEach((row, i) => {
+        // Tambahkan title di atas (insert di baris 1, dorong header ke 2-3)
+        sheet.spliceRows(1, 0, []);
+        const totalCols = 4 + nQ * 10 + 2;
+        sheet.mergeCells(1, 1, 1, totalCols);
+        const titleCell = sheet.getCell(1, 1);
+        titleCell.value = `📄 Laporan Detail ${moduleTitle} (Harian) — ${bulan}`;
+        titleCell.font = { bold: true, size: 12, color: { argb: 'FF1565C0' } };
+        titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+        sheet.getRow(1).height = 24;
+
+        // Data rows
+        harianReportData.forEach((row: any, i: number) => {
           const rowData: any = {
             no: i + 1,
             tanggal: row.tanggal,
@@ -1570,34 +1654,75 @@ function PatroliDetailContent() {
             keterangan: row.keterangan,
           };
 
-          let yaCount = 0;
-          let totalCount = 0;
-
-          row.patrols.forEach((p: any, colIdx: number) => {
-            let jawA = "-";
-            let jawB = "-";
-            if (p) {
-              const ansA = p.answers.find((a: any) => a.label.includes("Perkabelan aman"))?.jawaban;
-              const ansB = p.answers.find((a: any) => a.label.toLowerCase().includes("sambungan listrik aman"))?.jawaban;
-              jawA = ansA || "-";
-              jawB = ansB || "-";
-
-              if (jawA === "Ya") { yaCount++; totalCount++; } else if (jawA === "Tidak") { totalCount++; }
-              if (jawB === "Ya") { yaCount++; totalCount++; } else if (jawB === "Tidak") { totalCount++; }
-            }
-            rowData[`p${colIdx + 1}_a`] = jawA;
-            rowData[`p${colIdx + 1}_b`] = jawB;
+          let yaRow = 0, totalRow = 0;
+          for (let colIdx = 0; colIdx < 10; colIdx++) {
+            const p = row.patrols[colIdx];
+            questions.forEach((q: any, qIdx: number) => {
+              const ans = p?.answers?.find((a: any) => a.sheetHeader === q.sheetHeader || a.label === q.label);
+              const jaw = ans?.jawaban ?? "-";
+              rowData[`p${colIdx + 1}_q${qIdx}`] = p ? jaw : "-";
+              if (p) {
+                if (jaw === 'Ya') { yaRow++; totalRow++; }
+                else if (jaw === 'Tidak') { totalRow++; }
+              }
+            });
+          }
+          rowData.rata = totalRow > 0 ? ((yaRow / totalRow) * 100).toFixed(0) + '%' : '-';
+          const exRow = sheet.addRow(rowData);
+          // Warna Ya/Tidak
+          exRow.eachCell((cell, colNum) => {
+            const v = cell.value as string;
+            if (v === 'Ya') { cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8F5E9' } }; cell.font = { color: { argb: 'FF2E7D32' } }; }
+            else if (v === 'Tidak') { cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFEBEE' } }; cell.font = { color: { argb: 'FFC62828' } }; }
+            cell.alignment = { horizontal: 'center', vertical: 'middle' };
+            cell.border = { right: { style: 'thin', color: { argb: 'FFE0E0E0' } }, bottom: { style: 'thin', color: { argb: 'FFE0E0E0' } } };
           });
-
-          rowData.rata = totalCount > 0 ? ((yaCount / totalCount) * 100).toFixed(0) + "%" : "-";
-          sheet.addRow(rowData);
         });
+
+        // Summary rows: Patuh (Ya) + Tidak Patuh
+        const patuhRow: any = { ruangan: '✅ Patuh (Ya)' };
+        const tidakRow: any = { ruangan: '❌ Tidak Patuh' };
+        if (harianSummary) {
+          for (let colIdx = 0; colIdx < 10; colIdx++) {
+            questions.forEach((_: any, qIdx: number) => {
+              const s = harianSummary[colIdx * nQ + qIdx] as any;
+              const total = s.ya + s.tidak;
+              patuhRow[`p${colIdx + 1}_q${qIdx}`] = total > 0 ? `${s.ya} (${((s.ya / total) * 100).toFixed(0)}%)` : '-';
+              tidakRow[`p${colIdx + 1}_q${qIdx}`] = total > 0 ? `${s.tidak} (${((s.tidak / total) * 100).toFixed(0)}%)` : '-';
+            });
+          }
+        }
+        const totalYaSum = harianSummary?.reduce((acc: number, s: any) => acc + s.ya, 0) ?? 0;
+        const totalTidakSum = harianSummary?.reduce((acc: number, s: any) => acc + s.tidak, 0) ?? 0;
+        const grandTotal = totalYaSum + totalTidakSum;
+        patuhRow.rata = grandTotal > 0 ? `${totalYaSum} (${((totalYaSum / grandTotal) * 100).toFixed(0)}%)` : '-';
+        tidakRow.rata = grandTotal > 0 ? `${totalTidakSum} (${((totalTidakSum / grandTotal) * 100).toFixed(0)}%)` : '-';
+
+        const patuhExRow = sheet.addRow(patuhRow);
+        patuhExRow.eachCell(cell => {
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8F5E9' } };
+          cell.font = { bold: true, color: { argb: 'FF2E7D32' } };
+          cell.alignment = { horizontal: 'center', vertical: 'middle' };
+          cell.border = { right: { style: 'thin', color: { argb: 'FF81C784' } }, bottom: { style: 'thin', color: { argb: 'FF81C784' } } };
+        });
+        const tidakExRow = sheet.addRow(tidakRow);
+        tidakExRow.eachCell(cell => {
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFEBEE' } };
+          cell.font = { bold: true, color: { argb: 'FFC62828' } };
+          cell.alignment = { horizontal: 'center', vertical: 'middle' };
+          cell.border = { right: { style: 'thin', color: { argb: 'FFEF9A9A' } }, bottom: { style: 'thin', color: { argb: 'FFEF9A9A' } } };
+        });
+
+        // Freeze panes
+        sheet.views = [{ state: 'frozen', xSplit: 4, ySplit: 3 }];
+
       }
 
       const buffer = await workbook.xlsx.writeBuffer();
       const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
       const tabName = type === 'apd' ? activeApdTab : type === 'b3' ? activeB3Tab : '';
-      await downloadWithSavePrompt(blob, `K3_RSOMH_DETAIL_${type.toUpperCase()}${tabName ? '_' + tabName : ''}_${bulan}.xlsx`);
+      const exportSlug = type === 'harian' ? slug.toUpperCase() : type.toUpperCase();
+      await downloadWithSavePrompt(blob, `K3_RSOMH_DETAIL_${exportSlug}${tabName ? '_' + tabName : ''}_${bulan}.xlsx`);
     } catch (e) {
       console.error(e);
       alert('Gagal membuat Excel.');
@@ -1842,6 +1967,15 @@ function PatroliDetailContent() {
         {moduleDef.logOnly && (
           <span className="badge-warning">Log Kegiatan (Tidak ada skor)</span>
         )}
+        {isBgRefreshing && (
+          <span className="flex items-center gap-1.5 text-xs text-indigo-500 dark:text-indigo-400 animate-pulse font-medium">
+            <svg className="animate-spin h-3 w-3" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+            </svg>
+            Memperbarui...
+          </span>
+        )}
       </div>
 
       {/* ── Filter bar ── */}
@@ -1904,15 +2038,7 @@ function PatroliDetailContent() {
           >
             {loading ? "⏳" : "🔄"} Refresh
           </button>
-          {!moduleDef.logOnly && (
-            <button
-              onClick={handleGenerateSummary}
-              disabled={generatingAi || loading || !data?.submissions.length}
-              className="btn-primary bg-indigo-600 hover:bg-indigo-700 text-xs disabled:opacity-50 border-indigo-600 hover:border-indigo-700 shadow-md shadow-indigo-500/20"
-            >
-              {generatingAi ? "⏳" : "✨"} AI Summary
-            </button>
-          )}
+
           {!moduleDef.logOnly && (
             <button
               onClick={handleExportExcel}
@@ -1934,53 +2060,7 @@ function PatroliDetailContent() {
         </div>
       </div>
 
-      {/* ── AI Summary Result ── */}
-      {(aiSummary || generatingAi) && (
-        <div className="card p-5 border-l-4 border-l-indigo-500 bg-indigo-50/50 dark:bg-indigo-900/10">
-          <div className="flex items-center gap-2 mb-3">
-            <span className="text-indigo-600 dark:text-indigo-400 text-lg">✨</span>
-            <h3 className="font-bold text-gray-800 dark:text-gray-100">Ringkasan Eksekutif AI</h3>
-          </div>
-          {generatingAi ? (
-            <div className="animate-pulse space-y-3">
-              <div className="h-4 bg-gray-200 dark:bg-slate-700 rounded w-3/4"></div>
-              <div className="h-4 bg-gray-200 dark:bg-slate-700 rounded w-full"></div>
-              <div className="h-4 bg-gray-200 dark:bg-slate-700 rounded w-5/6"></div>
-            </div>
-          ) : (
-            <div className="text-sm text-gray-700 dark:text-gray-300 space-y-4 whitespace-pre-wrap leading-relaxed">
-              {aiSummary}
 
-              {/* Bagian Catatan / Interaksi Lanjutan AI */}
-              <div className="mt-6 pt-4 border-t border-indigo-100 dark:border-indigo-800/30">
-                <label className="block text-xs font-semibold text-indigo-700 dark:text-indigo-400 mb-2">
-                  Tambahkan catatan atau ubah sudut pandang AI:
-                </label>
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={aiContext}
-                    onChange={(e) => setAiContext(e.target.value)}
-                    placeholder="Contoh: Fokuskan pada temuan di Ruang UGD..."
-                    className="form-control text-sm w-full bg-white dark:bg-slate-800"
-                    disabled={generatingAi}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') handleGenerateSummary();
-                    }}
-                  />
-                  <button
-                    onClick={handleGenerateSummary}
-                    disabled={generatingAi || loading}
-                    className="btn-primary bg-indigo-600 hover:bg-indigo-700 text-sm disabled:opacity-50 whitespace-nowrap"
-                  >
-                    Perbarui Ringkasan
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
 
       {/* ── Error ── */}
       {error && (
@@ -2069,7 +2149,7 @@ function PatroliDetailContent() {
       )}
 
       {/* ── Submission table ── */}
-      {slug !== "elektrik" && slug !== "apd" && slug !== "b3" && (
+      {slug !== "elektrik" && slug !== "apd" && slug !== "b3" && !HARIAN_SLUGS.includes(slug as HarianSlug) && (
         <section aria-label="Detail Submission">
           <h2 className="section-label mb-3">📋 Detail Submission {slug === "pcra" && "(Semua Data)"}</h2>
           {!loading && (
@@ -2129,7 +2209,8 @@ function PatroliDetailContent() {
                       </th>
                     ))}
                     <th rowSpan={2} className="w-24 text-center align-middle bg-indigo-50 dark:bg-indigo-900/20 text-indigo-800 dark:text-indigo-300 border-r border-gray-200 dark:border-slate-700">Rata-rata</th>
-                    <th rowSpan={2} className="w-48 align-middle">Keterangan</th>
+                    <th rowSpan={2} className="w-48 align-middle border-r border-gray-200 dark:border-slate-700">Keterangan</th>
+                    <th rowSpan={2} className="w-32 align-middle text-xs">Foto</th>
                   </tr>
                   <tr>
                     {[...Array(10)].map((_, i) => (
@@ -2198,7 +2279,7 @@ function PatroliDetailContent() {
                         );
                       })()}
 
-                      <td className="text-xs max-w-[150px]">
+                      <td className="text-xs max-w-[150px] border-r border-gray-200 dark:border-slate-700">
                         {row.keterangan && row.keterangan !== "-" ? (
                           <button
                             onClick={() => setKeteranganPopup(row.keterangan)}
@@ -2209,35 +2290,92 @@ function PatroliDetailContent() {
                           </button>
                         ) : <span className="text-gray-400">-</span>}
                       </td>
+                      <td className="text-xs max-w-[120px] p-2">
+                        {row.photos && row.photos.length > 0 ? (
+                          <div className="flex flex-wrap gap-1">
+                            {row.photos.map((ph: any, pIdx: number) => (
+                              <a
+                                key={pIdx}
+                                href={ph.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="bg-blue-100 text-blue-700 hover:bg-blue-200 px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors"
+                                title="Lihat Foto"
+                              >
+                                {ph.label}
+                              </a>
+                            ))}
+                          </div>
+                        ) : <span className="text-gray-400">-</span>}
+                      </td>
                     </tr>
                   ))}
                   {elektrikReportData.length === 0 && (
                     <tr>
-                      <td colSpan={25} className="text-center p-8 text-gray-500">
+                      <td colSpan={27} className="text-center p-8 text-gray-500">
                         Tidak ada data ruangan di Master Data.
                       </td>
                     </tr>
                   )}
                 </tbody>
                 <tfoot>
-                  <tr className="bg-indigo-50 dark:bg-indigo-900/20 font-bold text-indigo-700 dark:text-indigo-400">
-                    <td colSpan={4} className="text-right p-2 border-r border-gray-200 dark:border-slate-700">Persentase (%)</td>
-                    {elektrikSummary?.map((s, i) => {
-                      const total = s.ya + s.tidak;
-                      return (
-                        <td key={i} className="text-center p-2 border-r border-gray-200 dark:border-slate-700">
-                          {total > 0 ? ((s.ya / total) * 100).toFixed(0) + "%" : "-"}
-                        </td>
-                      );
-                    })}
-                    <td className="text-center font-bold bg-indigo-100/80 dark:bg-indigo-900/40 text-indigo-800 dark:text-indigo-300 border-r border-gray-200 dark:border-slate-700">
+                  {/* Baris 1: Jumlah Ya (Patuh) */}
+                  <tr className="bg-green-50 dark:bg-green-900/10 text-green-700 dark:text-green-400 border-t-2 border-green-200 dark:border-green-800/50">
+                    <td colSpan={4} className="text-right p-2 text-xs font-semibold border-r border-gray-200 dark:border-slate-700">✅ Patuh (Ya)</td>
+                    {elektrikSummary?.map((s, i) => (
+                      <td key={i} className="text-center py-1 px-1 border-r border-gray-200 dark:border-slate-700">
+                        <div className="flex flex-col items-center gap-0.5">
+                          <span className="font-bold text-xs">{s.ya}</span>
+                          <span className="text-[10px] font-medium bg-green-200 dark:bg-green-800 text-green-900 dark:text-green-100 px-1 py-0.5 rounded leading-none">
+                            {(s.ya + s.tidak) > 0 ? ((s.ya / (s.ya + s.tidak)) * 100).toFixed(0) + "%" : "-"}
+                          </span>
+                        </div>
+                      </td>
+                    ))}
+                    <td className="text-center py-1 font-bold bg-green-100/80 dark:bg-green-900/40 text-green-800 dark:text-green-300 border-r border-gray-200 dark:border-slate-700">
                       {(() => {
-                        const totalYa = elektrikSummary?.reduce((acc, curr) => acc + curr.ya, 0) || 0;
-                        const totalAll = elektrikSummary?.reduce((acc, curr) => acc + curr.ya + curr.tidak, 0) || 0;
-                        return totalAll > 0 ? ((totalYa / totalAll) * 100).toFixed(0) + "%" : "-";
+                        const totalYa = elektrikSummary?.reduce((acc, s) => acc + s.ya, 0) ?? 0;
+                        const totalAll = elektrikSummary?.reduce((acc, s) => acc + s.ya + s.tidak, 0) ?? 0;
+                        return (
+                          <div className="flex flex-col items-center gap-0.5">
+                            <span className="text-xs">{totalYa}</span>
+                            <span className="text-[10px] bg-green-200 dark:bg-green-800 text-green-900 dark:text-green-100 px-1.5 py-0.5 rounded-md leading-none">
+                              {totalAll > 0 ? ((totalYa / totalAll) * 100).toFixed(0) + "%" : "-"}
+                            </span>
+                          </div>
+                        );
                       })()}
                     </td>
-                    <td></td>
+                    <td colSpan={2}></td>
+                  </tr>
+                  {/* Baris 2: Jumlah Tidak (Tidak Patuh) */}
+                  <tr className="bg-red-50 dark:bg-red-900/10 text-red-700 dark:text-red-400">
+                    <td colSpan={4} className="text-right p-2 text-xs font-semibold border-r border-gray-200 dark:border-slate-700">❌ Tidak Patuh</td>
+                    {elektrikSummary?.map((s, i) => (
+                      <td key={i} className="text-center py-1 px-1 border-r border-gray-200 dark:border-slate-700">
+                        <div className="flex flex-col items-center gap-0.5">
+                          <span className="font-bold text-xs">{s.tidak}</span>
+                          <span className="text-[10px] font-medium bg-red-200 dark:bg-red-800 text-red-900 dark:text-red-100 px-1 py-0.5 rounded leading-none">
+                            {(s.ya + s.tidak) > 0 ? ((s.tidak / (s.ya + s.tidak)) * 100).toFixed(0) + "%" : "-"}
+                          </span>
+                        </div>
+                      </td>
+                    ))}
+                    <td className="text-center py-1 font-bold bg-red-100/80 dark:bg-red-900/40 text-red-800 dark:text-red-300 border-r border-gray-200 dark:border-slate-700">
+                      {(() => {
+                        const totalTidak = elektrikSummary?.reduce((acc, s) => acc + s.tidak, 0) ?? 0;
+                        const totalAll = elektrikSummary?.reduce((acc, s) => acc + s.ya + s.tidak, 0) ?? 0;
+                        return (
+                          <div className="flex flex-col items-center gap-0.5">
+                            <span className="text-xs">{totalTidak}</span>
+                            <span className="text-[10px] bg-red-200 dark:bg-red-800 text-red-900 dark:text-red-100 px-1.5 py-0.5 rounded-md leading-none">
+                              {totalAll > 0 ? ((totalTidak / totalAll) * 100).toFixed(0) + "%" : "-"}
+                            </span>
+                          </div>
+                        );
+                      })()}
+                    </td>
+                    <td colSpan={2}></td>
                   </tr>
                 </tfoot>
               </table>
@@ -2245,6 +2383,211 @@ function PatroliDetailContent() {
           </div>
         </section>
       )}
+
+      {/* ── Harian Horizontal Tables (Evakuasi, Kebersihan, Risiko, Sampah, Code Red) ── */}
+      {HARIAN_SLUGS.includes(slug as HarianSlug) && !loading && data && (() => {
+        const questions = MODULE_BY_SLUG[slug]?.questions ?? [];
+        const abbrevs = HARIAN_ABBREV[slug as HarianSlug] ?? [];
+        const nQ = questions.length;
+        const getBadge = (jawaban: string) => {
+          if (jawaban === "Ya") return "text-green-600 bg-green-50 dark:bg-green-900/20 px-2 py-1 rounded font-medium text-xs";
+          if (jawaban === "Tidak") return "text-red-600 bg-red-50 dark:bg-red-900/20 px-2 py-1 rounded font-medium text-xs";
+          if (jawaban === "N/A") return "text-gray-600 bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded font-medium text-xs";
+          return "text-gray-400 text-xs";
+        };
+        return (
+          <section aria-label={`Laporan Detail ${moduleDef.title}`} className="mt-8">
+            <div className="flex flex-col md:flex-row items-center justify-between mb-4 gap-4">
+              <h2 className="section-label mb-0">📄 Laporan Detail {moduleDef.title} (Harian)</h2>
+              <button
+                onClick={() => handleExportDetailExcel('harian')}
+                disabled={downloading || harianReportData.length === 0}
+                className="btn-success text-xs shadow-sm py-2 px-3 whitespace-nowrap rounded-md"
+              >
+                {downloading ? "⏳" : "📊"} Excel
+              </button>
+            </div>
+            <div className="card overflow-hidden">
+              <div className="overflow-x-auto p-4">
+                <table className="data-table text-sm w-full text-left" style={{ minWidth: `${400 + nQ * 10 * 80}px` }}>
+                  <thead>
+                    <tr>
+                      <th rowSpan={2} className="w-12 text-center align-middle border-r border-gray-200 dark:border-slate-700">No</th>
+                      <th rowSpan={2} className="w-32 align-middle border-r border-gray-200 dark:border-slate-700">Tanggal</th>
+                      <th rowSpan={2} className="w-40 align-middle border-r border-gray-200 dark:border-slate-700">Nama Petugas</th>
+                      <th rowSpan={2} className="w-48 align-middle border-r border-gray-200 dark:border-slate-700">Ruangan</th>
+                      {[...Array(10)].map((_, i) => (
+                        <th key={i} colSpan={nQ} className="text-center bg-gray-50 dark:bg-slate-800 border-b border-r border-gray-200 dark:border-slate-700 text-xs">
+                          Patroli Ke-{i + 1}
+                        </th>
+                      ))}
+                      <th rowSpan={2} className="w-20 text-center align-middle bg-indigo-50 dark:bg-indigo-900/20 text-indigo-800 dark:text-indigo-300 border-r border-gray-200 dark:border-slate-700 text-xs">Rata-rata</th>
+                      <th rowSpan={2} className="w-44 align-middle text-xs border-r border-gray-200 dark:border-slate-700">Keterangan</th>
+                      <th rowSpan={2} className="w-32 align-middle text-xs">Foto</th>
+                    </tr>
+                    <tr>
+                      {[...Array(10)].map((_, i) => (
+                        <Fragment key={`sub-${i}`}>
+                          {abbrevs.map((abbr, qIdx) => (
+                            <th
+                              key={qIdx}
+                              className="text-center text-[10px] uppercase border-r border-gray-200 dark:border-slate-700"
+                              style={{ minWidth: 52 }}
+                              title={questions[qIdx]?.label ?? abbr}
+                            >
+                              {abbr}
+                            </th>
+                          ))}
+                        </Fragment>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {harianReportData.map((row: any, i: number) => (
+                      <tr key={i} className="hover:bg-gray-50 dark:hover:bg-slate-800/50">
+                        <td className="text-center font-medium text-gray-500 border-r border-gray-200 dark:border-slate-700">{i + 1}</td>
+                        <td className="whitespace-nowrap text-gray-600 dark:text-gray-300 border-r border-gray-200 dark:border-slate-700">{row.tanggal}</td>
+                        <td className="text-gray-700 dark:text-gray-300 truncate max-w-[150px] border-r border-gray-200 dark:border-slate-700">{row.namaPetugas}</td>
+                        <td className="font-medium text-gray-800 dark:text-gray-100 truncate border-r border-gray-200 dark:border-slate-700">{row.ruangan}</td>
+                        {[...Array(10)].map((_, colIdx) => {
+                          const p = row.patrols[colIdx];
+                          return (
+                            <Fragment key={colIdx}>
+                              {questions.map((q: any, qIdx: number) => {
+                                const ans = p?.answers?.find((a: any) => a.sheetHeader === q.sheetHeader || a.label === q.label);
+                                const jaw = ans?.jawaban ?? "-";
+                                return (
+                                  <td key={qIdx} className="text-center border-r border-gray-200 dark:border-slate-700">
+                                    {p
+                                      ? <span className={getBadge(jaw)}>{jaw || "-"}</span>
+                                      : <span className="text-gray-300 text-xs">-</span>}
+                                  </td>
+                                );
+                              })}
+                            </Fragment>
+                          );
+                        })}
+                        {(() => {
+                          let ya = 0, total = 0;
+                          row.patrols.forEach((p: any) => {
+                            if (!p) return;
+                            questions.forEach((q: any) => {
+                              const ans = p.answers?.find((a: any) => a.sheetHeader === q.sheetHeader || a.label === q.label);
+                              if (ans?.jawaban === "Ya") { ya++; total++; }
+                              else if (ans?.jawaban === "Tidak") { total++; }
+                            });
+                          });
+                          return (
+                            <td className="text-center font-bold text-indigo-700 dark:text-indigo-400 bg-indigo-50/50 dark:bg-indigo-900/10 border-r border-gray-200 dark:border-slate-700">
+                              {total > 0 ? ((ya / total) * 100).toFixed(0) + "%" : "-"}
+                            </td>
+                          );
+                        })()}
+                        <td className="text-xs max-w-[150px] border-r border-gray-200 dark:border-slate-700">
+                          {row.keterangan && row.keterangan !== "-" ? (
+                            <button
+                              onClick={() => setKeteranganPopup(row.keterangan)}
+                              className="text-left text-blue-600 dark:text-blue-400 underline underline-offset-2 truncate block w-full hover:text-blue-800 dark:hover:text-blue-200 transition-colors"
+                              title="Klik untuk lihat selengkapnya"
+                            >
+                              {row.keterangan.length > 40 ? row.keterangan.substring(0, 40) + "…" : row.keterangan}
+                            </button>
+                          ) : <span className="text-gray-400">-</span>}
+                        </td>
+                        <td className="text-xs max-w-[120px] p-2">
+                          {row.photos && row.photos.length > 0 ? (
+                            <div className="flex flex-wrap gap-1">
+                              {row.photos.map((ph: any, pIdx: number) => (
+                                <a
+                                  key={pIdx}
+                                  href={ph.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="bg-blue-100 text-blue-700 hover:bg-blue-200 px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors"
+                                  title="Lihat Foto"
+                                >
+                                  {ph.label}
+                                </a>
+                              ))}
+                            </div>
+                          ) : <span className="text-gray-400">-</span>}
+                        </td>
+                      </tr>
+                    ))}
+                    {harianReportData.length === 0 && (
+                      <tr>
+                        <td colSpan={4 + nQ * 10 + 3} className="text-center p-8 text-gray-500">
+                          Tidak ada data ruangan di Master Data.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                  <tfoot>
+                    {/* Baris 1: Jumlah Ya (Patuh) */}
+                    <tr className="bg-green-50 dark:bg-green-900/10 text-green-700 dark:text-green-400 border-t-2 border-green-200 dark:border-green-800/50">
+                      <td colSpan={4} className="text-right p-2 text-xs font-semibold border-r border-gray-200 dark:border-slate-700">✅ Patuh (Ya)</td>
+                      {harianSummary?.map((s: any, i: number) => (
+                        <td key={i} className="text-center py-1 px-1 border-r border-gray-200 dark:border-slate-700">
+                          <div className="flex flex-col items-center gap-0.5">
+                            <span className="font-bold text-xs">{s.ya}</span>
+                            <span className="text-[10px] font-medium bg-green-200 dark:bg-green-800 text-green-900 dark:text-green-100 px-1 py-0.5 rounded leading-none">
+                              {(s.ya + s.tidak) > 0 ? ((s.ya / (s.ya + s.tidak)) * 100).toFixed(0) + "%" : "-"}
+                            </span>
+                          </div>
+                        </td>
+                      ))}
+                      <td className="text-center py-1 font-bold bg-green-100/80 dark:bg-green-900/40 text-green-800 dark:text-green-300 border-r border-gray-200 dark:border-slate-700">
+                        {(() => {
+                          const totalYa = harianSummary?.reduce((acc: number, s: any) => acc + s.ya, 0) ?? 0;
+                          const totalAll = harianSummary?.reduce((acc: number, s: any) => acc + s.ya + s.tidak, 0) ?? 0;
+                          return (
+                            <div className="flex flex-col items-center gap-0.5">
+                              <span className="text-xs">{totalYa}</span>
+                              <span className="text-[10px] bg-green-200 dark:bg-green-800 text-green-900 dark:text-green-100 px-1.5 py-0.5 rounded-md leading-none">
+                                {totalAll > 0 ? ((totalYa / totalAll) * 100).toFixed(0) + "%" : "-"}
+                              </span>
+                            </div>
+                          );
+                        })()}
+                      </td>
+                      <td colSpan={2}></td>
+                    </tr>
+                    {/* Baris 2: Jumlah Tidak (Tidak Patuh) */}
+                    <tr className="bg-red-50 dark:bg-red-900/10 text-red-700 dark:text-red-400">
+                      <td colSpan={4} className="text-right p-2 text-xs font-semibold border-r border-gray-200 dark:border-slate-700">❌ Tidak Patuh</td>
+                      {harianSummary?.map((s: any, i: number) => (
+                        <td key={i} className="text-center py-1 px-1 border-r border-gray-200 dark:border-slate-700">
+                          <div className="flex flex-col items-center gap-0.5">
+                            <span className="font-bold text-xs">{s.tidak}</span>
+                            <span className="text-[10px] font-medium bg-red-200 dark:bg-red-800 text-red-900 dark:text-red-100 px-1 py-0.5 rounded leading-none">
+                              {(s.ya + s.tidak) > 0 ? ((s.tidak / (s.ya + s.tidak)) * 100).toFixed(0) + "%" : "-"}
+                            </span>
+                          </div>
+                        </td>
+                      ))}
+                      <td className="text-center py-1 font-bold bg-red-100/80 dark:bg-red-900/40 text-red-800 dark:text-red-300 border-r border-gray-200 dark:border-slate-700">
+                        {(() => {
+                          const totalTidak = harianSummary?.reduce((acc: number, s: any) => acc + s.tidak, 0) ?? 0;
+                          const totalAll = harianSummary?.reduce((acc: number, s: any) => acc + s.ya + s.tidak, 0) ?? 0;
+                          return (
+                            <div className="flex flex-col items-center gap-0.5">
+                              <span className="text-xs">{totalTidak}</span>
+                              <span className="text-[10px] bg-red-200 dark:bg-red-800 text-red-900 dark:text-red-100 px-1.5 py-0.5 rounded-md leading-none">
+                                {totalAll > 0 ? ((totalTidak / totalAll) * 100).toFixed(0) + "%" : "-"}
+                              </span>
+                            </div>
+                          );
+                        })()}
+                      </td>
+                      <td colSpan={2}></td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+          </section>
+        );
+      })()}
 
       {/* ── APD Tabbed Tables ── */}
       {slug === "apd" && !loading && data && (

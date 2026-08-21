@@ -6,6 +6,17 @@
 // pada Google Sheet "Form Responses 1" yang baru.
 // ============================================================================
 
+export const HARIAN_SLUGS = ["evakuasi", "kebersihan", "risiko", "sampah", "code-red"] as const;
+export type HarianSlug = typeof HARIAN_SLUGS[number];
+
+export const HARIAN_ABBREV: Record<HarianSlug, string[]> = {
+  "evakuasi":   ["Hmbt", "Pintu"],
+  "kebersihan": ["Dndg", "P/J", "Lntai", "Plfn", "Lmpu", "Vntl", "Rkok"],
+  "risiko":     ["Tngga", "Lntai", "Ramp", "Alat"],
+  "sampah":     ["Label"],
+  "code-red":   ["Papan", "H.Merah", "H.Putih", "H.Biru", "H.Kng", "P.Tanggal"],
+};
+
 export type JawabanType = "yntb" | "yn"; // yntb = Ya/Tidak/N/A, yn = Ya/Tidak only
 
 export interface QuestionDef {

@@ -18,7 +18,7 @@ import {
 
 export const dynamic = 'force-dynamic';
 
-import { MODULES, MODULE_BY_SLUG } from "@/lib/modules";
+import { MODULES, MODULE_BY_SLUG, HARIAN_ABBREV } from "@/lib/modules";
 import { computeModuleAggregate } from "@/lib/analytics";
 import { getCurrentBulan, formatBulan, formatTanggal, formatMaybeDate } from "@/lib/utils";
 
@@ -317,6 +317,245 @@ export async function GET(request: Request) {
       const isSosialisasi = mod.slug === "sosialisasi";
       const isAPD = mod.slug === "apd";
       const isAPAR = mod.slug === "apar";
+
+      const HARIAN_SLUGS = ["evakuasi", "kebersihan", "risiko", "sampah", "code-red"];
+      const isHarian = HARIAN_SLUGS.includes(mod.slug);
+      const isElektrik = mod.slug === "elektrik";
+
+      if (isHarian || isElektrik) {
+        // --- HORIZONTAL 10-PATROLS FORMAT FOR HARIAN & ELEKTRIK ---
+        const questions = mod.questions;
+        const nQ = questions.length;
+        
+        // 1. Group submissions by location
+        const groupedByLoc: Record<string, any[]> = {};
+        for (const sub of aggregate.submissions) {
+           const loc = (sub.location || (sub as any).ruangan || (sub as any).row?.ruangan || "").trim();
+           if (!groupedByLoc[loc]) groupedByLoc[loc] = [];
+           groupedByLoc[loc].push(sub);
+        }
+
+        const rowDataList: any[] = [];
+        const summaryData: any[] = Array(10 * nQ).fill(0).map(() => ({ ya: 0, tidak: 0 }));
+
+        Object.keys(groupedByLoc).forEach(loc => {
+           const patrols = groupedByLoc[loc].sort((a, b) => {
+              const da = new Date(a.row.tanggalPemantauan || a.row.timestamp).getTime();
+              const db = new Date(b.row.tanggalPemantauan || b.row.timestamp).getTime();
+              return da - db;
+           }).slice(-10);
+
+           const latestPatrol = patrols.length > 0 ? patrols[patrols.length - 1] : null;
+           const tanggal = latestPatrol ? formatTanggal(latestPatrol.row.tanggalPemantauan || latestPatrol.row.timestamp) : "-";
+           const petugasArr = Array.from(new Set(patrols.map(p => p.row.namaPetugas).filter(n => n && n !== "-")));
+           const petugas = petugasArr.length > 0 ? petugasArr.join(", ") : "-";
+
+           const ketParts = patrols.map((p, idx) => {
+             const desc = buildKeteranganForExport(p, false, false, []);
+             return desc !== "-" ? `P${idx + 1}: ${desc}` : null;
+           }).filter(Boolean);
+           const keterangan = ketParts.length > 0 ? ketParts.join(" ; ") : "-";
+
+           const rowData: any = {
+             ruangan: loc,
+             tanggal,
+             petugas,
+             keterangan,
+             patrols: Array(10).fill(null)
+           };
+
+           patrols.forEach((p, idx) => {
+              rowData.patrols[idx] = p;
+           });
+
+           rowDataList.push(rowData);
+           
+           // Calculate summary
+           patrols.forEach((p, idx) => {
+             questions.forEach((q, qIdx) => {
+                const ansObj = p.answers?.find((ans: any) => ans.question.sheetHeader === q.sheetHeader || ans.question.label === q.label);
+                let jaw = ansObj ? ansObj.jawaban : "-";
+                if (jaw === "Ya") summaryData[idx * nQ + qIdx].ya++;
+                else if (jaw === "Tidak") summaryData[idx * nQ + qIdx].tidak++;
+             });
+           });
+        });
+
+        // 2. Build Excel Structure
+        const cols: any[] = [
+          { key: 'no', width: 5 },
+          { key: 'tanggal', width: 15 },
+          { key: 'petugas', width: 22 },
+          { key: 'ruangan', width: 28 },
+        ];
+        
+        for (let p = 1; p <= 10; p++) {
+          for (let q = 0; q < nQ; q++) {
+            cols.push({ key: `p${p}_q${q}`, width: isElektrik ? 12 : 10 });
+          }
+        }
+        cols.push({ key: 'rata', width: 14 });
+        cols.push({ key: 'keterangan', width: 35 });
+        cols.push({ key: 'foto', width: 35 });
+        sheet.columns = cols;
+
+        const row1: string[] = ['No', 'Tanggal', 'Nama Petugas', 'Ruangan'];
+        for (let p = 1; p <= 10; p++) {
+          row1.push(`Patroli Ke-${p}`);
+          for (let q = 1; q < nQ; q++) row1.push('');
+        }
+        row1.push('Rata-rata', 'Keterangan', 'Foto URL');
+
+        const row2: string[] = ['', '', '', ''];
+        for (let p = 1; p <= 10; p++) {
+          if (isElektrik) {
+             row2.push('Kabel', 'Sambungan');
+          } else {
+             const abbrevs = HARIAN_ABBREV[mod.slug as keyof typeof HARIAN_ABBREV] ?? [];
+             abbrevs.forEach(a => row2.push(a));
+          }
+        }
+        row2.push('', '', '');
+
+        sheet.addRow(row1);
+        sheet.addRow(row2);
+
+        // Insert Title Row FIRST before merging to avoid overlapping merged cells
+        sheet.spliceRows(1, 0, []); // Now row1 is at index 2, row2 is at index 3
+        
+        const totalCols = 4 + nQ * 10 + 3;
+        sheet.mergeCells(1, 1, 1, totalCols);
+        const titleCell = sheet.getCell(1, 1);
+        titleCell.value = `Laporan Patroli — ${mod.title} — ${formatBulan(bulan)}`;
+        titleCell.font = { bold: true, size: 12, color: { argb: 'FF1565C0' } };
+        titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+        sheet.getRow(1).height = 24;
+
+        sheet.mergeCells('A2:A3');
+        sheet.mergeCells('B2:B3');
+        sheet.mergeCells('C2:C3');
+        sheet.mergeCells('D2:D3');
+        let hCol = 5;
+        for (let p = 1; p <= 10; p++) {
+          if (nQ > 1) sheet.mergeCells(2, hCol, 2, hCol + nQ - 1);
+          else sheet.mergeCells(2, hCol, 3, hCol);
+          hCol += nQ;
+        }
+        sheet.mergeCells(2, hCol, 3, hCol);
+        sheet.mergeCells(2, hCol + 1, 3, hCol + 1);
+        sheet.mergeCells(2, hCol + 2, 3, hCol + 2);
+
+        const headerStyle = {
+          font: { bold: true, color: { argb: 'FFFFFFFF' } } as any,
+          fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1565C0' } } as any,
+          alignment: { horizontal: 'center', vertical: 'middle', wrapText: true } as any,
+          border: { bottom: { style: 'thin', color: { argb: 'FF90CAF9' } } } as any,
+        };
+        [2, 3].forEach(rIdx => {
+          sheet.getRow(rIdx).height = 22;
+          sheet.getRow(rIdx).eachCell(cell => Object.assign(cell, headerStyle));
+        });
+
+        // Populate Data
+        rowDataList.forEach((row, i) => {
+          const exRowData: any = {
+            no: i + 1,
+            tanggal: row.tanggal,
+            petugas: row.petugas,
+            ruangan: row.ruangan,
+            keterangan: row.keterangan,
+          };
+
+          let yaRow = 0, totalRow = 0;
+          for (let colIdx = 0; colIdx < 10; colIdx++) {
+            const p = row.patrols[colIdx];
+            questions.forEach((q, qIdx) => {
+              const ans = p?.answers?.find((a: any) => a.question.sheetHeader === q.sheetHeader || a.question.label === q.label);
+              let jaw = ans ? ans.jawaban : "-";
+              if (jaw === "TidakAda" || jaw === "Setengah") jaw = jawabanDisplay(jaw, mod.slug); // fallback
+              exRowData[`p${colIdx + 1}_q${qIdx}`] = p ? jaw : "-";
+              
+              if (p && (jaw === 'Ya' || jaw === 'Tidak')) {
+                 totalRow++;
+                 if (jaw === 'Ya') yaRow++;
+              }
+            });
+          }
+          exRowData.rata = totalRow > 0 ? ((yaRow / totalRow) * 100).toFixed(0) + '%' : '-';
+          
+          const photos: {label: string, url: string}[] = [];
+          for (let colIdx = 0; colIdx < 10; colIdx++) {
+            const p = row.patrols[colIdx];
+            if (p && p.photoUrl && p.photoUrl !== "-" && p.photoUrl.trim() !== "") {
+               photos.push({ label: `P${colIdx + 1}`, url: p.photoUrl });
+            }
+          }
+          if (photos.length > 0) {
+             exRowData.foto = photos.map(ph => `📷 Foto ${ph.label}: \n${ph.url}`).join("\n\n");
+          } else {
+             exRowData.foto = "-";
+          }
+
+          const exRow = sheet.addRow(exRowData);
+          
+          if (photos.length === 1) {
+             const fotoCell = exRow.getCell(totalCols);
+             fotoCell.value = { text: `📷 Lihat Foto (${photos[0].label})`, hyperlink: photos[0].url };
+             fotoCell.font = { color: { argb: "FF0563C1" }, underline: true };
+          } else if (photos.length > 1) {
+             const fotoCell = exRow.getCell(totalCols);
+             fotoCell.alignment = { ...fotoCell.alignment, wrapText: true };
+          }
+          
+          exRow.eachCell((cell) => {
+            const v = cell.value as string;
+            if (v === 'Ya') { cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8F5E9' } }; cell.font = { color: { argb: 'FF2E7D32' } }; }
+            else if (v === 'Tidak') { cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFEBEE' } }; cell.font = { color: { argb: 'FFC62828' } }; }
+            
+            // Do not override alignment for fotoCell if it has wrapText
+            if (!cell.alignment?.wrapText) {
+              cell.alignment = { horizontal: 'center', vertical: 'middle' };
+            }
+            cell.border = { right: { style: 'thin', color: { argb: 'FFE0E0E0' } }, bottom: { style: 'thin', color: { argb: 'FFE0E0E0' } } };
+          });
+        });
+
+        // 3. Add Summary Footers
+        const patuhRow: any = { ruangan: '✅ Patuh (Ya)' };
+        const tidakRow: any = { ruangan: '❌ Tidak Patuh' };
+        for (let colIdx = 0; colIdx < 10; colIdx++) {
+          questions.forEach((_, qIdx) => {
+            const s = summaryData[colIdx * nQ + qIdx];
+            const total = s.ya + s.tidak;
+            patuhRow[`p${colIdx + 1}_q${qIdx}`] = total > 0 ? `${s.ya} (${((s.ya / total) * 100).toFixed(0)}%)` : '-';
+            tidakRow[`p${colIdx + 1}_q${qIdx}`] = total > 0 ? `${s.tidak} (${((s.tidak / total) * 100).toFixed(0)}%)` : '-';
+          });
+        }
+        const totalYaSum = summaryData.reduce((acc, s) => acc + s.ya, 0);
+        const totalTidakSum = summaryData.reduce((acc, s) => acc + s.tidak, 0);
+        const grandTotal = totalYaSum + totalTidakSum;
+        patuhRow.rata = grandTotal > 0 ? `${totalYaSum} (${((totalYaSum / grandTotal) * 100).toFixed(0)}%)` : '-';
+        tidakRow.rata = grandTotal > 0 ? `${totalTidakSum} (${((totalTidakSum / grandTotal) * 100).toFixed(0)}%)` : '-';
+
+        const patuhExRow = sheet.addRow(patuhRow);
+        patuhExRow.eachCell(cell => {
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8F5E9' } };
+          cell.font = { bold: true, color: { argb: 'FF2E7D32' } };
+          cell.alignment = { horizontal: 'center', vertical: 'middle' };
+          cell.border = { right: { style: 'thin', color: { argb: 'FF81C784' } }, bottom: { style: 'thin', color: { argb: 'FF81C784' } } };
+        });
+        const tidakExRow = sheet.addRow(tidakRow);
+        tidakExRow.eachCell(cell => {
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFEBEE' } };
+          cell.font = { bold: true, color: { argb: 'FFC62828' } };
+          cell.alignment = { horizontal: 'center', vertical: 'middle' };
+          cell.border = { right: { style: 'thin', color: { argb: 'FFEF9A9A' } }, bottom: { style: 'thin', color: { argb: 'FFEF9A9A' } } };
+        });
+
+        sheet.views = [{ state: 'frozen', xSplit: 4, ySplit: 3 }];
+        
+        continue; // Skip the default vertical generation!
+      }
 
       let locationHeader = "Ruangan";
       if (isPCRA) locationHeader = "Lokasi & Deskripsi Pekerjaan";
