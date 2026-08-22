@@ -307,19 +307,19 @@ export function computeModuleAggregate(
               const val = row.raw[key];
               if (val && typeof val === "string" && val.trim() !== "") {
                 const match = key.match(/\[(\d+|lebih)\]/i);
-                let count = 1;
                 if (match) {
                   const numStr = match[1].toLowerCase();
-                  count = numStr === "lebih" ? 5 : parseInt(numStr, 10);
+                  let count = numStr === "lebih" ? 5 : parseInt(numStr, 10);
                   if (isNaN(count)) count = 1;
-                }
-                const professions = val.split(",").map((t) => t.trim()).filter(Boolean);
-                
-                for (const p of professions) {
-                   nonCompliantCount += count;
-                   if (masterProfesi.includes(p.toLowerCase())) {
-                       profViolations += count;
-                   }
+                  
+                  const professions = val.split(",").map((t) => t.trim()).filter(Boolean);
+                  
+                  for (const p of professions) {
+                     nonCompliantCount += count;
+                     if (masterProfesi.includes(p.toLowerCase())) {
+                         profViolations += count;
+                     }
+                  }
                 }
               }
             }
@@ -405,7 +405,7 @@ export function computeModuleAggregate(
        countTidakAda = proteksiTidakAda;
        // The denominator for Sarana Proteksi % ONLY includes Ya and Kurang Baik (Setengah)
        const d = proteksiYa + proteksiSetengah;
-       pct = d === 0 ? null : Math.round((proteksiYa / d) * 100);
+       pct = d === 0 ? null : Number(((proteksiYa / d) * 100).toFixed(2));
     } else if (module.slug === "hydrant") {
        // Hydrant: hitung TidakAda terpisah untuk ditampilkan sebagai indikator ke-3
        // Denominator = Ya + Tidak + TidakAda (semua masuk hitungan)
@@ -417,9 +417,9 @@ export function computeModuleAggregate(
        }
        countTidakAda = hydrantTidakAda;
        // denominator sudah termasuk TidakAda (dihitung sebagai tidak di loop atas)
-       pct = denominator === 0 ? null : Math.round((ya / denominator) * 100);
+       pct = denominator === 0 ? null : Number(((ya / denominator) * 100).toFixed(2));
     } else {
-       pct = denominator === 0 ? null : Math.round((ya / denominator) * 100);
+       pct = denominator === 0 ? null : Number(((ya / denominator) * 100).toFixed(2));
     }
 
     // Look up target percentage from masterTopik
@@ -499,9 +499,9 @@ export function computeModuleAggregate(
   const totalPct =
     validPcts.length === 0
       ? null
-      : Math.round(
+      : Number((
           validPcts.reduce((s, r) => s + r.pct!, 0) / validPcts.length
-        );
+        ).toFixed(2));
 
   // Build per-submission results
   const submissions: SubmissionResult[] = relevantRows.map((row) => {
@@ -519,7 +519,7 @@ export function computeModuleAggregate(
       : "";
 
     const tags: string[] = [];
-    if (module.badgeHeader) {
+    if (module.badgeHeader && module.slug !== "apd") {
       const tagRaw = getField(row, module.badgeHeader);
       if (tagRaw) {
         tags.push(...tagRaw.split(",").map((t) => t.trim()).filter(Boolean));
@@ -534,19 +534,18 @@ export function computeModuleAggregate(
           if (val && typeof val === "string" && val.trim() !== "") {
             // Extract number from bracket, e.g., "[2]" -> 2. If "[lebih]", assume 5.
             const match = key.match(/\[(\d+|lebih)\]/i);
-            let count = 1;
             if (match) {
               const numStr = match[1].toLowerCase();
-              count = numStr === "lebih" ? 5 : parseInt(numStr, 10);
+              let count = numStr === "lebih" ? 5 : parseInt(numStr, 10);
               if (isNaN(count)) count = 1;
-            }
 
-            const professions = val.split(",").map((t) => t.trim()).filter(Boolean);
-            
-            // Push each profession `count` times so ApdProfesiChart can count them correctly
-            for (const p of professions) {
-              for (let i = 0; i < count; i++) {
-                tags.push(p);
+              const professions = val.split(",").map((t) => t.trim()).filter(Boolean);
+              
+              // Push each profession `count` times so ApdProfesiChart can count them correctly
+              for (const p of professions) {
+                for (let i = 0; i < count; i++) {
+                  tags.push(p);
+                }
               }
             }
           }

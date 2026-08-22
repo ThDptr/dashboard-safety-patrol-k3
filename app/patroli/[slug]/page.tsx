@@ -158,6 +158,7 @@ function PatroliDetailContent() {
   const [activeB3Tab, setActiveB3Tab] = useState<"a" | "b" | "c">("a");
   const [activeElektrikTab, setActiveElektrikTab] = useState<"a" | "b">("a");
   const [keteranganPopup, setKeteranganPopup] = useState<string | null>(null);
+  const [photoPopup, setPhotoPopup] = useState<string | null>(null);
 
   // AbortController ref to cancel stale fetches
   const abortRef = useRef<AbortController | null>(null);
@@ -350,12 +351,6 @@ function PatroliDetailContent() {
       }
     }
 
-    // 3. Photo URL
-    const photo = useSecondary ? p?.secondaryPhotoUrl : p?.photoUrl;
-    if (typeof photo === 'string' && photo.trim() !== "") {
-      parts.push(`📷 ${photo.trim()}`);
-    }
-
     return parts.length > 0 ? parts.join(" | ") : null;
   };
 
@@ -363,7 +358,7 @@ function PatroliDetailContent() {
   const groupedSubmissionsByLoc = useMemo(() => {
     if (!data?.submissions) return {};
     const map: Record<string, any[]> = {};
-    data.submissions.forEach(p => {
+    data.submissions.forEach((p: any) => {
       const loc = (p.location || p.ruangan || "").toLowerCase();
       if (!map[loc]) map[loc] = [];
       map[loc].push(p);
@@ -381,7 +376,7 @@ function PatroliDetailContent() {
   const groupedSubmissionsByKe = useMemo(() => {
     if (!data?.submissions) return {};
     const map: Record<number, any[]> = {};
-    data.submissions.forEach(p => {
+    data.submissions.forEach((p: any) => {
       const pKe = parseInt(String(p.patroliKe));
       if (!isNaN(pKe)) {
         if (!map[pKe]) map[pKe] = [];
@@ -410,8 +405,20 @@ function PatroliDetailContent() {
       // Filter tags: ONLY "perawat" violations reduce the physical room's compliance
       top10 = top10.map(p => {
         let pTags = p.tags ? [...p.tags] : [];
-        pTags = pTags.filter(t => t.toLowerCase().includes("perawat"));
-        return { ...p, tags: pTags };
+        pTags = pTags.filter((t: string) => t.toLowerCase().includes("perawat"));
+        
+        let pAnswers = p.answers ? [...p.answers] : [];
+        if (pTags.length === 0) {
+          pAnswers = pAnswers.map((a: any) => {
+            if (a && a.label && typeof a.label === 'string' && (a.label.includes("menggunakan APD") || a.label.includes("Kepatuhan")) 
+                && a.jawaban === "Tidak") {
+              return { ...a, jawaban: "Ya" }; // ← Ruangan dianggap patuh karena tidak ada perawat melanggar
+            }
+            return a;
+          });
+        }
+        
+        return { ...p, tags: pTags, answers: pAnswers };
       });
 
       const latestPatrol = top10.length > 0 ? top10[top10.length - 1] : null;
@@ -426,7 +433,8 @@ function PatroliDetailContent() {
       const keterangan = top10
         .map((p, idx) => {
           const ket = buildPatrolKeterangan(p, masterProfesiNamesForKet);
-          return ket ? `P${idx + 1}: ${ket}` : null;
+          const d = formatTanggal(p.tanggalPemantauan || p.timestamp);
+          return ket ? `P${idx + 1} (${d}): ${ket}` : null;
         })
         .filter(Boolean)
         .join(" ; ") || "-";
@@ -449,16 +457,22 @@ function PatroliDetailContent() {
 
       // Create 10 virtual patrols based on patroliKe (1 to 10)
       const top10 = [];
-      let allKeterangan: { slot: number; desc: string }[] = [];
+      let allKeterangan: { slot: number; desc: string, photoUrl?: string | null, date?: any }[] = [];
       let latestDate = 0;
       let allPetugas: string[] = [];
+      let allPhotos: any[] = [];
 
       for (let i = 1; i <= 10; i++) {
         const patrolsInSlot = groupedSubmissionsByKe[i] || [];
 
         let sumViolations = 0;
-        patrolsInSlot.forEach(p => {
-          const matchCount = (p.tags || []).filter((t: string) => t.toLowerCase() === namaProfesi.toLowerCase()).length;
+        patrolsInSlot.forEach((p: any) => {
+          const matchCount = (p.tags || []).filter((t: string) => {
+            const tLower = t.toLowerCase();
+            const npLower = namaProfesi.toLowerCase();
+            return tLower.includes(npLower) || npLower.includes(tLower);
+          }).length;
+          
           if (matchCount > 0) {
             sumViolations += matchCount;
             
@@ -467,8 +481,10 @@ function PatroliDetailContent() {
             const profStr = `[Tidak patuh: ${matchCount} ${namaProfesi}]${locationStr}`;
             const parts = [profStr];
             if (p.description && typeof p.description === 'string' && p.description.trim() !== "" && p.description !== "-") parts.push(p.description.trim());
-            if (p.photoUrl) parts.push(`📷 ${p.photoUrl}`);
-            allKeterangan.push({ slot: i, desc: parts.join(" | ") });
+            if (p.photoUrl) {
+              allPhotos.push({ url: p.photoUrl, label: `P${i}` });
+            }
+            allKeterangan.push({ slot: i, desc: parts.join(" | "), date: p.tanggalPemantauan || p.timestamp });
             
             if (p.namaPetugas) allPetugas.push(p.namaPetugas);
             const pTime = new Date(p.tanggalPemantauan || p.timestamp).getTime();
@@ -494,10 +510,11 @@ function PatroliDetailContent() {
         tanggal: latestDate > 0 ? formatTanggal(new Date(latestDate).toISOString()) : "-",
         namaPetugas: allPetugas.length > 0 ? Array.from(new Set(allPetugas)).join(", ") : "-",
         keterangan: allKeterangan.length > 0
-          ? allKeterangan.map(k => `P${k.slot}: ${k.desc}`).join(" ; ")
+          ? allKeterangan.map(k => { const d = formatTanggal(k.date); return `P${k.slot} (${d}): ${k.desc}`; }).join(" ; ")
           : "-",
         patrols: top10,
-        isProfesi: true
+        isProfesi: true,
+        photos: allPhotos
       };
     }).filter(d => d.patrols.some(p => p !== null));
 
@@ -526,7 +543,8 @@ function PatroliDetailContent() {
       const keterangan = top10
         .map((p, idx) => {
           const ket = buildPatrolKeterangan(p);
-          return ket ? `P${idx + 1}: ${ket}` : null;
+          const d = formatTanggal(p.tanggalPemantauan || p.timestamp);
+          return ket ? `P${idx + 1} (${d}): ${ket}` : null;
         })
         .filter(Boolean)
         .join(" ; ") || "-";
@@ -567,7 +585,8 @@ function PatroliDetailContent() {
       const keteranganA = top2
         .map((p, idx) => {
           const ket = buildPatrolKeterangan(p, [], false);
-          return ket ? `P${idx + 1}: ${ket}` : null;
+          const d = formatTanggal(p.tanggalPemantauan || p.timestamp);
+          return ket ? `P${idx + 1} (${d}): ${ket}` : null;
         })
         .filter(Boolean)
         .join(" ; ") || "-";
@@ -575,7 +594,8 @@ function PatroliDetailContent() {
       const keteranganC = top2
         .map((p, idx) => {
           const ket = buildPatrolKeterangan(p, [], true);
-          return ket ? `P${idx + 1}: ${ket}` : null;
+          const d = formatTanggal(p.tanggalPemantauan || p.timestamp);
+          return ket ? `P${idx + 1} (${d}): ${ket}` : null;
         })
         .filter(Boolean)
         .join(" ; ") || "-";
@@ -646,7 +666,7 @@ function PatroliDetailContent() {
     return summary;
   }, [slug, reportData, activeApdTab]);
 
-  const apdOverallPct = data?.totalPct !== undefined && data.totalPct !== null ? Math.round(data.totalPct) : null;
+  const apdOverallPct = data?.totalPct !== undefined && data.totalPct !== null ? ((data.totalPct)).toFixed(2) : null;
 
   const b3Summary = useMemo(() => {
     if (slug !== "b3" || !b3ReportData.length) return null;
@@ -716,7 +736,7 @@ function PatroliDetailContent() {
     let totalSeharusnya = 0;
 
     reportData.forEach(row => {
-      row.patrols.forEach(p => {
+      row.patrols.forEach((p: any) => {
         if (p && row.jumlahKaryawan > 0) {
           const ansObj = p.answers.find((a: any) => a.label.includes("menggunakan APD") || a.label.includes("Kepatuhan"));
           if (ansObj && ansObj.jawaban !== "-" && ansObj.jawaban !== "N/A") {
@@ -735,7 +755,7 @@ function PatroliDetailContent() {
     });
 
     if (totalSeharusnya === 0) return data?.totalPct ?? null;
-    return Math.round((totalPatuh / totalSeharusnya) * 100);
+    return Number(((totalPatuh / totalSeharusnya) * 100).toFixed(2));
   }, [slug, reportData, data?.totalPct]);
 
   const customQuestionResults = useMemo(() => {
@@ -748,7 +768,7 @@ function PatroliDetailContent() {
       let totalKetersediaanAns = 0;
 
       reportData.forEach(row => {
-        row.patrols.forEach(p => {
+        row.patrols.forEach((p: any) => {
           if (p) {
             const answerObj = p.answers.find((a: any) => a.label === "Ketersediaan terpenuhi" || a.label.includes("Ketersediaan"));
             const ans = answerObj ? answerObj.jawaban : "-";
@@ -758,7 +778,7 @@ function PatroliDetailContent() {
         });
       });
 
-      const ketersediaanPct = totalKetersediaanAns > 0 ? Math.round((totalKetersediaanYa / totalKetersediaanAns) * 100) : null;
+      const ketersediaanPct = totalKetersediaanAns > 0 ? Number(((totalKetersediaanYa / totalKetersediaanAns) * 100).toFixed(2)) : null;
 
       results.forEach((qr: any) => {
         if (qr.label.includes("menggunakan APD") || qr.label.includes("Kepatuhan")) {
@@ -799,7 +819,7 @@ function PatroliDetailContent() {
           });
         });
 
-        return sumTotal > 0 ? Math.round((sumYa / sumTotal) * 100) : null;
+        return sumTotal > 0 ? Number(((sumYa / sumTotal) * 100).toFixed(2)) : null;
       };
 
       results.forEach((qr: any) => {
@@ -819,14 +839,14 @@ function PatroliDetailContent() {
     if (slug !== "apd" || customQuestionResults.length === 0) return data?.totalPct ?? null;
     const valid = customQuestionResults.filter((q: any) => q.pct !== null);
     if (valid.length === 0) return null;
-    return Math.round(valid.reduce((acc: number, q: any) => acc + q.pct, 0) / valid.length);
+    return Number((valid.reduce((acc: number, q: any) => acc + q.pct, 0) / valid.length).toFixed(2));
   }, [slug, customQuestionResults, data?.totalPct]);
 
   const b3OverallPct = useMemo(() => {
     if (slug !== "b3" || customQuestionResults.length === 0) return data?.totalPct ?? null;
     const valid = customQuestionResults.filter((q: any) => q.pct !== null);
     if (valid.length === 0) return null;
-    return Math.round(valid.reduce((acc: number, q: any) => acc + q.pct, 0) / valid.length);
+    return Number((valid.reduce((acc: number, q: any) => acc + q.pct, 0) / valid.length).toFixed(2));
   }, [slug, customQuestionResults, data?.totalPct]);
 
   const elektrikSummary = useMemo(() => {
@@ -876,7 +896,8 @@ function PatroliDetailContent() {
       const keterangan = top10
         .map((p: any, idx: number) => {
           const ket = buildPatrolKeterangan(p);
-          return ket ? `P${idx + 1}: ${ket}` : null;
+          const d = formatTanggal(p.tanggalPemantauan || p.timestamp);
+          return ket ? `P${idx + 1} (${d}): ${ket}` : null;
         })
         .filter(Boolean)
         .join(" ; ") || "-";
@@ -1103,6 +1124,7 @@ function PatroliDetailContent() {
           cols.push({ header: 'Total Tidak Patuh', key: 'tidak_patuh', width: 15 });
         }
         cols.push({ header: 'Keterangan', key: 'keterangan', width: 35 });
+        cols.push({ header: 'Foto', key: 'foto', width: 35 });
 
         // Gunakan baris 2 untuk header (karena baris 1 sudah dipakai title)
         sheet.getRow(2).values = cols.map((c: any) => c.header);
@@ -1120,7 +1142,7 @@ function PatroliDetailContent() {
         });
         // Data rows akan dimulai dari baris 3 (baris 1=title, baris 2=header)
 
-        reportData.forEach((row, i) => {
+        reportData.forEach((row: any, i) => {
           const rowData: any = {
             no: i + 1,
             tanggal: row.tanggal,
@@ -1128,6 +1150,7 @@ function PatroliDetailContent() {
             ruangan: row.isProfesi ? `${row.ruangan.substring(2)} (Profesi)` : row.ruangan,
             pegawai: row.jumlahKaryawan,
             keterangan: row.keterangan,
+            foto: row.photos && row.photos.length > 0 ? row.photos.map((ph: any) => `${ph.label}: ${ph.url}`).join(" ; ") : "-",
           };
 
           let yaCount = 0;
@@ -1135,7 +1158,7 @@ function PatroliDetailContent() {
           let sumCompliant = 0;
           let sumNonCompliant = 0;
 
-          row.patrols.forEach((p, colIdx) => {
+          row.patrols.forEach((p: any, colIdx: number) => {
             let ans = "-";
             if (p) {
               if (activeApdTab === "ketersediaan") {
@@ -1171,11 +1194,11 @@ function PatroliDetailContent() {
           });
 
           if (activeApdTab === "ketersediaan") {
-            rowData['rata'] = totalCount > 0 ? ((yaCount / totalCount) * 100).toFixed(0) + "%" : "-";
+            rowData['rata'] = totalCount > 0 ? ((yaCount / totalCount) * 100).toFixed(2) + "%" : "-";
           } else {
             const totalRow = sumCompliant + sumNonCompliant;
-            const patuhPct = totalRow > 0 ? Math.round((sumCompliant / totalRow) * 100) : 0;
-            const tidakPatuhPct = totalRow > 0 ? Math.round((sumNonCompliant / totalRow) * 100) : 0;
+            const patuhPct = totalRow > 0 ? Number(((sumCompliant / totalRow) * 100).toFixed(2)) : 0;
+            const tidakPatuhPct = totalRow > 0 ? Number(((sumNonCompliant / totalRow) * 100).toFixed(2)) : 0;
             rowData['patuh'] = totalRow > 0 ? `${sumCompliant} (${patuhPct}%)` : "-";
             rowData['tidak_patuh'] = totalRow > 0 ? `${sumNonCompliant} (${tidakPatuhPct}%)` : "-";
           }
@@ -1191,11 +1214,11 @@ function PatroliDetailContent() {
           let totalAns = 0;
           apdSummary?.forEach((s, i) => {
             const t = s.ya + s.tidak;
-            rowPct[`p${i}`] = t > 0 ? `${s.ya} (${((s.ya / t) * 100).toFixed(0)}%)` : "0%";
+            rowPct[`p${i}`] = t > 0 ? `${s.ya} (${((s.ya / t) * 100).toFixed(2)}%)` : "0%";
             totalYa += s.ya;
             totalAns += t;
           });
-          rowPct['rata'] = totalAns > 0 ? `${totalYa} (${((totalYa / totalAns) * 100).toFixed(0)}%)` : "-";
+          rowPct['rata'] = totalAns > 0 ? `${totalYa} (${((totalYa / totalAns) * 100).toFixed(2)}%)` : "-";
 
           sheet.addRow(rowPct);
         } else {
@@ -1205,14 +1228,14 @@ function PatroliDetailContent() {
 
           let totalCompliantSum = 0;
           apdSummary?.forEach((s, i) => {
-            const pct = s.totalKaryawan > 0 ? Math.round((s.totalCompliant / s.totalKaryawan) * 100) : 0;
+            const pct = s.totalKaryawan > 0 ? Number(((s.totalCompliant / s.totalKaryawan) * 100).toFixed(2)) : 0;
             rowAvg[`p${i}`] = s.totalKaryawan > 0 ? `${s.totalCompliant} (${pct}%)` : "-";
             totalCompliantSum += s.totalCompliant;
           });
 
           let totalNonCompliantSum = 0;
           reportData.forEach(row => {
-            row.patrols.forEach(p => {
+            row.patrols.forEach((p: any) => {
               if (p && row.jumlahKaryawan > 0) {
                  const ansObj = p.answers.find((a: any) => a.label.includes("menggunakan APD") || a.label.includes("Kepatuhan"));
                  if (ansObj && ansObj.jawaban !== "-" && ansObj.jawaban !== "N/A" && ansObj.jawaban !== "") {
@@ -1230,8 +1253,8 @@ function PatroliDetailContent() {
           });
 
           let denom = totalCompliantSum + totalNonCompliantSum;
-          const patuhSumPct = denom > 0 ? Math.round((totalCompliantSum / denom) * 100) : 0;
-          const tidakSumPct = denom > 0 ? Math.round((totalNonCompliantSum / denom) * 100) : 0;
+          const patuhSumPct = denom > 0 ? Number(((totalCompliantSum / denom) * 100).toFixed(2)) : 0;
+          const tidakSumPct = denom > 0 ? Number(((totalNonCompliantSum / denom) * 100).toFixed(2)) : 0;
           rowAvg['patuh'] = denom > 0 ? `${totalCompliantSum} (${patuhSumPct}%)` : "-";
           rowAvg['tidak_patuh'] = denom > 0 ? `${totalNonCompliantSum} (${tidakSumPct}%)` : "-";
 
@@ -1243,9 +1266,9 @@ function PatroliDetailContent() {
         const apdData = apdSummary?.map(s => {
           if (activeApdTab === "ketersediaan") {
             const t = s.ya + s.tidak;
-            return t > 0 ? Number(((s.ya / t) * 100).toFixed(0)) : 0;
+            return t > 0 ? Number(((s.ya / t) * 100).toFixed(2)) : 0;
           } else {
-            return s.totalKaryawan > 0 ? Number(((s.totalCompliant / s.totalKaryawan) * 100).toFixed(0)) : 0;
+            return s.totalKaryawan > 0 ? Number(((s.totalCompliant / s.totalKaryawan) * 100).toFixed(2)) : 0;
           }
         }) || [];
 
@@ -1367,7 +1390,8 @@ function PatroliDetailContent() {
           { key: 'p2_1', width: 15 },
           { key: 'p2_2', width: 15 },
           { key: 'rata', width: 15 },
-          { key: 'keterangan', width: 30 }
+          { key: 'keterangan', width: 30 },
+          { key: 'foto', width: 30 }
         );
         sheet.columns = cols;
 
@@ -1385,8 +1409,8 @@ function PatroliDetailContent() {
           mCols += 2;
         }
 
-        row1.push(h1, '', h2, '', 'Rata-rata (%)', 'Keterangan');
-        row2.push('Patroli 1', 'Patroli 2', 'Patroli 1', 'Patroli 2', '', '');
+        row1.push(h1, '', h2, '', 'Rata-rata (%)', 'Keterangan', 'Foto');
+        row2.push('Patroli 1', 'Patroli 2', 'Patroli 1', 'Patroli 2', '', '', '');
 
         sheet.addRow(row1);
         sheet.addRow(row2);
@@ -1409,12 +1433,16 @@ function PatroliDetailContent() {
         sheet.getRow(1).alignment = { horizontal: 'center', vertical: 'middle' };
         sheet.getRow(2).alignment = { horizontal: 'center', vertical: 'middle' };
 
-        b3ReportData.forEach((row, i) => {
+        b3ReportData.forEach((row: any, i) => {
           const rowData: any = {
             no: i + 1,
             ruangan: row.ruangan,
             keterangan: activeB3Tab === "c" ? row.keteranganC : row.keteranganA,
           };
+          
+          const photos = activeB3Tab === "c" ? row.photosC : row.photosA;
+          rowData.foto = photos && photos.length > 0 ? photos.map((ph: any) => `${ph.label}: ${ph.url}`).join(" ; ") : "-";
+          
           if (activeB3Tab === "a") {
             rowData.seh = row.seharusnyaLemari;
             rowData.ter = row.terlihatLemari;
@@ -1489,7 +1517,7 @@ function PatroliDetailContent() {
             rowData[`p2_${colIdx + 1}`] = ans;
           });
 
-          rowData.rata = totalExpected > 0 ? ((compliantCount / totalExpected) * 100).toFixed(0) + "%" : "-";
+          rowData.rata = totalExpected > 0 ? ((compliantCount / totalExpected) * 100).toFixed(2) + "%" : "-";
 
           sheet.addRow(rowData);
         });
@@ -1499,7 +1527,7 @@ function PatroliDetailContent() {
         b3Summary?.forEach((s, i) => {
           let colKey = i < 2 ? `p1_${i + 1}` : `p2_${i - 1}`;
           const t = s.ya + s.tidak;
-          rowPct[colKey] = t > 0 ? `${s.ya} (${((s.ya / t) * 100).toFixed(0)}%)` : "0%";
+          rowPct[colKey] = t > 0 ? `${s.ya} (${((s.ya / t) * 100).toFixed(2)}%)` : "0%";
         });
 
         let totalYa = 0, totalAns = 0;
@@ -1507,7 +1535,7 @@ function PatroliDetailContent() {
           totalYa += s.ya;
           totalAns += (s.ya + s.tidak);
         });
-        rowPct['rata'] = totalAns > 0 ? `${totalYa} (${((totalYa / totalAns) * 100).toFixed(0)}%)` : "-";
+        rowPct['rata'] = totalAns > 0 ? `${totalYa} (${((totalYa / totalAns) * 100).toFixed(2)}%)` : "-";
 
         sheet.addRow(rowPct);
 
@@ -1516,22 +1544,22 @@ function PatroliDetailContent() {
           const s1 = b3Summary[0];
           const s2 = b3Summary[1];
           const t1 = s1.ya + s1.tidak + s2.ya + s2.tidak;
-          rowCombined['p1_1'] = t1 > 0 ? `${s1.ya + s2.ya} (${(((s1.ya + s2.ya) / t1) * 100).toFixed(0)}%)` : "0%";
+          rowCombined['p1_1'] = t1 > 0 ? `${s1.ya + s2.ya} (${(((s1.ya + s2.ya) / t1) * 100).toFixed(2)}%)` : "0%";
           
           const s3 = b3Summary[2];
           const s4 = b3Summary[3];
           const t2 = s3.ya + s3.tidak + s4.ya + s4.tidak;
-          rowCombined['p2_1'] = t2 > 0 ? `${s3.ya + s4.ya} (${(((s3.ya + s4.ya) / t2) * 100).toFixed(0)}%)` : "0%";
+          rowCombined['p2_1'] = t2 > 0 ? `${s3.ya + s4.ya} (${(((s3.ya + s4.ya) / t2) * 100).toFixed(2)}%)` : "0%";
         }
         sheet.addRow(rowCombined);
 
         // --- CHART B3 ---
         const b3Labels = [`${h1} (P1)`, `${h1} (P2)`, `${h2} (P1)`, `${h2} (P2)`];
         const b3Data = [
-          b3Summary && b3Summary[0] ? (b3Summary[0].ya + b3Summary[0].tidak > 0 ? Number(((b3Summary[0].ya / (b3Summary[0].ya + b3Summary[0].tidak)) * 100).toFixed(0)) : 0) : 0,
-          b3Summary && b3Summary[1] ? (b3Summary[1].ya + b3Summary[1].tidak > 0 ? Number(((b3Summary[1].ya / (b3Summary[1].ya + b3Summary[1].tidak)) * 100).toFixed(0)) : 0) : 0,
-          b3Summary && b3Summary[2] ? (b3Summary[2].ya + b3Summary[2].tidak > 0 ? Number(((b3Summary[2].ya / (b3Summary[2].ya + b3Summary[2].tidak)) * 100).toFixed(0)) : 0) : 0,
-          b3Summary && b3Summary[3] ? (b3Summary[3].ya + b3Summary[3].tidak > 0 ? Number(((b3Summary[3].ya / (b3Summary[3].ya + b3Summary[3].tidak)) * 100).toFixed(0)) : 0) : 0
+          b3Summary && b3Summary[0] ? (b3Summary[0].ya + b3Summary[0].tidak > 0 ? Number(((b3Summary[0].ya / (b3Summary[0].ya + b3Summary[0].tidak)) * 100).toFixed(2)) : 0) : 0,
+          b3Summary && b3Summary[1] ? (b3Summary[1].ya + b3Summary[1].tidak > 0 ? Number(((b3Summary[1].ya / (b3Summary[1].ya + b3Summary[1].tidak)) * 100).toFixed(2)) : 0) : 0,
+          b3Summary && b3Summary[2] ? (b3Summary[2].ya + b3Summary[2].tidak > 0 ? Number(((b3Summary[2].ya / (b3Summary[2].ya + b3Summary[2].tidak)) * 100).toFixed(2)) : 0) : 0,
+          b3Summary && b3Summary[3] ? (b3Summary[3].ya + b3Summary[3].tidak > 0 ? Number(((b3Summary[3].ya / (b3Summary[3].ya + b3Summary[3].tidak)) * 100).toFixed(2)) : 0) : 0
         ];
 
         const chartConfig = {
@@ -1589,6 +1617,7 @@ function PatroliDetailContent() {
         }
         cols.push({ key: 'rata', width: 14 });
         cols.push({ key: 'keterangan', width: 35 });
+        cols.push({ key: 'foto', width: 35 });
         sheet.columns = cols;
 
         // Baris header 1: No, Tgl, Petugas, Ruangan | Patroli Ke-1 (colspan nQ) | ... | Rata-rata | Keterangan
@@ -1597,14 +1626,14 @@ function PatroliDetailContent() {
           row1.push(`Patroli Ke-${p}`);
           for (let q = 1; q < nQ; q++) row1.push('');
         }
-        row1.push('Rata-rata', 'Keterangan');
+        row1.push('Rata-rata', 'Keterangan', 'Foto');
 
         // Baris header 2: singkatan per pertanyaan
         const row2: string[] = ['', '', '', ''];
         for (let p = 1; p <= 10; p++) {
           abbrevs.forEach(a => row2.push(a));
         }
-        row2.push('', '');
+        row2.push('', '', '');
 
         sheet.addRow(row1);
         sheet.addRow(row2);
@@ -1622,6 +1651,7 @@ function PatroliDetailContent() {
         }
         sheet.mergeCells(1, hCol, 2, hCol);     // Rata-rata
         sheet.mergeCells(1, hCol + 1, 2, hCol + 1); // Keterangan
+        sheet.mergeCells(1, hCol + 2, 2, hCol + 2); // Foto
 
         const headerStyle = {
           font: { bold: true, color: { argb: 'FFFFFFFF' } } as any,
@@ -1652,6 +1682,7 @@ function PatroliDetailContent() {
             petugas: row.namaPetugas,
             ruangan: row.ruangan,
             keterangan: row.keterangan,
+            foto: row.photos && row.photos.length > 0 ? row.photos.map((ph: any) => `${ph.label}: ${ph.url}`).join(" ; ") : "-",
           };
 
           let yaRow = 0, totalRow = 0;
@@ -1667,7 +1698,7 @@ function PatroliDetailContent() {
               }
             });
           }
-          rowData.rata = totalRow > 0 ? ((yaRow / totalRow) * 100).toFixed(0) + '%' : '-';
+          rowData.rata = totalRow > 0 ? ((yaRow / totalRow) * 100).toFixed(2) + '%' : '-';
           const exRow = sheet.addRow(rowData);
           // Warna Ya/Tidak
           exRow.eachCell((cell, colNum) => {
@@ -1687,16 +1718,16 @@ function PatroliDetailContent() {
             questions.forEach((_: any, qIdx: number) => {
               const s = harianSummary[colIdx * nQ + qIdx] as any;
               const total = s.ya + s.tidak;
-              patuhRow[`p${colIdx + 1}_q${qIdx}`] = total > 0 ? `${s.ya} (${((s.ya / total) * 100).toFixed(0)}%)` : '-';
-              tidakRow[`p${colIdx + 1}_q${qIdx}`] = total > 0 ? `${s.tidak} (${((s.tidak / total) * 100).toFixed(0)}%)` : '-';
+              patuhRow[`p${colIdx + 1}_q${qIdx}`] = total > 0 ? `${s.ya} (${((s.ya / total) * 100).toFixed(2)}%)` : '-';
+              tidakRow[`p${colIdx + 1}_q${qIdx}`] = total > 0 ? `${s.tidak} (${((s.tidak / total) * 100).toFixed(2)}%)` : '-';
             });
           }
         }
         const totalYaSum = harianSummary?.reduce((acc: number, s: any) => acc + s.ya, 0) ?? 0;
         const totalTidakSum = harianSummary?.reduce((acc: number, s: any) => acc + s.tidak, 0) ?? 0;
         const grandTotal = totalYaSum + totalTidakSum;
-        patuhRow.rata = grandTotal > 0 ? `${totalYaSum} (${((totalYaSum / grandTotal) * 100).toFixed(0)}%)` : '-';
-        tidakRow.rata = grandTotal > 0 ? `${totalTidakSum} (${((totalTidakSum / grandTotal) * 100).toFixed(0)}%)` : '-';
+        patuhRow.rata = grandTotal > 0 ? `${totalYaSum} (${((totalYaSum / grandTotal) * 100).toFixed(2)}%)` : '-';
+        tidakRow.rata = grandTotal > 0 ? `${totalTidakSum} (${((totalTidakSum / grandTotal) * 100).toFixed(2)}%)` : '-';
 
         const patuhExRow = sheet.addRow(patuhRow);
         patuhExRow.eachCell(cell => {
@@ -1919,6 +1950,24 @@ function PatroliDetailContent() {
 
   return (
     <div className="p-4 md:p-6 space-y-5">
+
+      {/* ── Foto Popup Modal ── */}
+      {photoPopup && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
+          onClick={() => setPhotoPopup(null)}
+        >
+          <div className="relative max-w-4xl w-full flex flex-col items-center justify-center" onClick={e => e.stopPropagation()}>
+            <button
+              onClick={() => setPhotoPopup(null)}
+              className="absolute -top-10 right-0 text-white hover:text-gray-300 text-3xl font-bold"
+            >
+              ×
+            </button>
+            <img src={photoPopup} alt="Foto Temuan" className="max-w-full max-h-[80vh] object-contain rounded-lg shadow-2xl border-4 border-white/10" />
+          </div>
+        </div>
+      )}
 
       {/* ── Keterangan Popup Modal ── */}
       {keteranganPopup && (
@@ -2195,8 +2244,8 @@ function PatroliDetailContent() {
           </div>
 
           <div className="card overflow-hidden">
-            <div className="overflow-x-auto p-4">
-              <table className="data-table text-sm w-full text-left min-w-[1200px]">
+            <div className="overflow-x-auto p-4" style={{ transform: "rotateX(180deg)" }}>
+              <table className="data-table text-sm w-full text-left min-w-[1200px]" style={{ transform: "rotateX(180deg)" }}>
                 <thead>
                   <tr>
                     <th rowSpan={2} className="w-12 text-center align-middle border-r border-gray-200 dark:border-slate-700">No</th>
@@ -2222,7 +2271,7 @@ function PatroliDetailContent() {
                   </tr>
                 </thead>
                 <tbody>
-                  {elektrikReportData.map((row, i) => (
+                  {elektrikReportData.map((row: any, i: number) => (
                     <tr key={i} className="hover:bg-gray-50 dark:hover:bg-slate-800/50">
                       <td className="text-center font-medium text-gray-500 border-r border-gray-200 dark:border-slate-700">{i + 1}</td>
                       <td className="whitespace-nowrap text-gray-600 dark:text-gray-300 border-r border-gray-200 dark:border-slate-700">{row.tanggal}</td>
@@ -2270,7 +2319,7 @@ function PatroliDetailContent() {
                             if (ansB === "Ya") { yaCount++; totalCount++; } else if (ansB === "Tidak") { totalCount++; }
                           }
                         });
-                        const avgText = totalCount > 0 ? ((yaCount / totalCount) * 100).toFixed(0) + "%" : "-";
+                        const avgText = totalCount > 0 ? ((yaCount / totalCount) * 100).toFixed(2) + "%" : "-";
 
                         return (
                           <td className="text-center font-bold text-indigo-700 dark:text-indigo-400 bg-indigo-50/50 dark:bg-indigo-900/10 border-r border-gray-200 dark:border-slate-700">
@@ -2327,7 +2376,7 @@ function PatroliDetailContent() {
                         <div className="flex flex-col items-center gap-0.5">
                           <span className="font-bold text-xs">{s.ya}</span>
                           <span className="text-[10px] font-medium bg-green-200 dark:bg-green-800 text-green-900 dark:text-green-100 px-1 py-0.5 rounded leading-none">
-                            {(s.ya + s.tidak) > 0 ? ((s.ya / (s.ya + s.tidak)) * 100).toFixed(0) + "%" : "-"}
+                            {(s.ya + s.tidak) > 0 ? ((s.ya / (s.ya + s.tidak)) * 100).toFixed(2) + "%" : "-"}
                           </span>
                         </div>
                       </td>
@@ -2340,7 +2389,7 @@ function PatroliDetailContent() {
                           <div className="flex flex-col items-center gap-0.5">
                             <span className="text-xs">{totalYa}</span>
                             <span className="text-[10px] bg-green-200 dark:bg-green-800 text-green-900 dark:text-green-100 px-1.5 py-0.5 rounded-md leading-none">
-                              {totalAll > 0 ? ((totalYa / totalAll) * 100).toFixed(0) + "%" : "-"}
+                              {totalAll > 0 ? ((totalYa / totalAll) * 100).toFixed(2) + "%" : "-"}
                             </span>
                           </div>
                         );
@@ -2356,7 +2405,7 @@ function PatroliDetailContent() {
                         <div className="flex flex-col items-center gap-0.5">
                           <span className="font-bold text-xs">{s.tidak}</span>
                           <span className="text-[10px] font-medium bg-red-200 dark:bg-red-800 text-red-900 dark:text-red-100 px-1 py-0.5 rounded leading-none">
-                            {(s.ya + s.tidak) > 0 ? ((s.tidak / (s.ya + s.tidak)) * 100).toFixed(0) + "%" : "-"}
+                            {(s.ya + s.tidak) > 0 ? ((s.tidak / (s.ya + s.tidak)) * 100).toFixed(2) + "%" : "-"}
                           </span>
                         </div>
                       </td>
@@ -2369,7 +2418,7 @@ function PatroliDetailContent() {
                           <div className="flex flex-col items-center gap-0.5">
                             <span className="text-xs">{totalTidak}</span>
                             <span className="text-[10px] bg-red-200 dark:bg-red-800 text-red-900 dark:text-red-100 px-1.5 py-0.5 rounded-md leading-none">
-                              {totalAll > 0 ? ((totalTidak / totalAll) * 100).toFixed(0) + "%" : "-"}
+                              {totalAll > 0 ? ((totalTidak / totalAll) * 100).toFixed(2) + "%" : "-"}
                             </span>
                           </div>
                         );
@@ -2408,8 +2457,8 @@ function PatroliDetailContent() {
               </button>
             </div>
             <div className="card overflow-hidden">
-              <div className="overflow-x-auto p-4">
-                <table className="data-table text-sm w-full text-left" style={{ minWidth: `${400 + nQ * 10 * 80}px` }}>
+              <div className="overflow-x-auto p-4" style={{ transform: "rotateX(180deg)" }}>
+                <table className="data-table text-sm w-full text-left" style={{ minWidth: `${400 + nQ * 10 * 80}px`, transform: "rotateX(180deg)" }}>
                   <thead>
                     <tr>
                       <th rowSpan={2} className="w-12 text-center align-middle border-r border-gray-200 dark:border-slate-700">No</th>
@@ -2479,7 +2528,7 @@ function PatroliDetailContent() {
                           });
                           return (
                             <td className="text-center font-bold text-indigo-700 dark:text-indigo-400 bg-indigo-50/50 dark:bg-indigo-900/10 border-r border-gray-200 dark:border-slate-700">
-                              {total > 0 ? ((ya / total) * 100).toFixed(0) + "%" : "-"}
+                              {total > 0 ? ((ya / total) * 100).toFixed(2) + "%" : "-"}
                             </td>
                           );
                         })()}
@@ -2531,7 +2580,7 @@ function PatroliDetailContent() {
                           <div className="flex flex-col items-center gap-0.5">
                             <span className="font-bold text-xs">{s.ya}</span>
                             <span className="text-[10px] font-medium bg-green-200 dark:bg-green-800 text-green-900 dark:text-green-100 px-1 py-0.5 rounded leading-none">
-                              {(s.ya + s.tidak) > 0 ? ((s.ya / (s.ya + s.tidak)) * 100).toFixed(0) + "%" : "-"}
+                              {(s.ya + s.tidak) > 0 ? ((s.ya / (s.ya + s.tidak)) * 100).toFixed(2) + "%" : "-"}
                             </span>
                           </div>
                         </td>
@@ -2544,7 +2593,7 @@ function PatroliDetailContent() {
                             <div className="flex flex-col items-center gap-0.5">
                               <span className="text-xs">{totalYa}</span>
                               <span className="text-[10px] bg-green-200 dark:bg-green-800 text-green-900 dark:text-green-100 px-1.5 py-0.5 rounded-md leading-none">
-                                {totalAll > 0 ? ((totalYa / totalAll) * 100).toFixed(0) + "%" : "-"}
+                                {totalAll > 0 ? ((totalYa / totalAll) * 100).toFixed(2) + "%" : "-"}
                               </span>
                             </div>
                           );
@@ -2560,7 +2609,7 @@ function PatroliDetailContent() {
                           <div className="flex flex-col items-center gap-0.5">
                             <span className="font-bold text-xs">{s.tidak}</span>
                             <span className="text-[10px] font-medium bg-red-200 dark:bg-red-800 text-red-900 dark:text-red-100 px-1 py-0.5 rounded leading-none">
-                              {(s.ya + s.tidak) > 0 ? ((s.tidak / (s.ya + s.tidak)) * 100).toFixed(0) + "%" : "-"}
+                              {(s.ya + s.tidak) > 0 ? ((s.tidak / (s.ya + s.tidak)) * 100).toFixed(2) + "%" : "-"}
                             </span>
                           </div>
                         </td>
@@ -2573,7 +2622,7 @@ function PatroliDetailContent() {
                             <div className="flex flex-col items-center gap-0.5">
                               <span className="text-xs">{totalTidak}</span>
                               <span className="text-[10px] bg-red-200 dark:bg-red-800 text-red-900 dark:text-red-100 px-1.5 py-0.5 rounded-md leading-none">
-                                {totalAll > 0 ? ((totalTidak / totalAll) * 100).toFixed(0) + "%" : "-"}
+                                {totalAll > 0 ? ((totalTidak / totalAll) * 100).toFixed(2) + "%" : "-"}
                               </span>
                             </div>
                           );
@@ -2626,8 +2675,8 @@ function PatroliDetailContent() {
           </div>
 
           <div className="card overflow-hidden">
-            <div className="overflow-x-auto p-4">
-              <table className="data-table text-sm w-full text-left min-w-[1200px]">
+            <div className="overflow-x-auto p-4" style={{ transform: "rotateX(180deg)" }}>
+              <table className="data-table text-sm w-full text-left min-w-[1200px]" style={{ transform: "rotateX(180deg)" }}>
                 <thead>
                   <tr>
                     <th className="w-12 text-center">No</th>
@@ -2647,10 +2696,12 @@ function PatroliDetailContent() {
                       </>
                     )}
                     <th className="w-48">Keterangan</th>
+                    <th className="w-24 text-center">Foto</th>
+                    <th className="w-32">Foto</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {reportData.map((row, i) => (
+                  {reportData.map((row: any, i) => (
                     <tr key={i} className={`hover:bg-gray-50 dark:hover:bg-slate-800/50 ${row.isProfesi ? 'bg-blue-50/40 dark:bg-blue-900/10' : ''}`}>
                       <td className="text-center font-medium text-gray-500">{i + 1}</td>
                       <td className="whitespace-nowrap text-gray-600 dark:text-gray-300">{row.tanggal}</td>
@@ -2724,7 +2775,7 @@ function PatroliDetailContent() {
                         if (activeApdTab === "ketersediaan") {
                           let yaCount = 0;
                           let totalCount = 0;
-                          row.patrols.forEach(p => {
+                          row.patrols.forEach((p: any) => {
                             if (p) {
                               const answerObj = p.answers.find((a: any) => a.label === "Ketersediaan terpenuhi" || a.label.includes("Ketersediaan"));
                               const ans = answerObj ? answerObj.jawaban : "-";
@@ -2732,7 +2783,7 @@ function PatroliDetailContent() {
                               else if (ans === "Tidak") { totalCount++; }
                             }
                           });
-                          const avgText = totalCount > 0 ? ((yaCount / totalCount) * 100).toFixed(0) + "%" : "-";
+                          const avgText = totalCount > 0 ? ((yaCount / totalCount) * 100).toFixed(2) + "%" : "-";
                           return (
                             <td className="text-center font-bold text-indigo-700 dark:text-indigo-400 bg-indigo-50/50 dark:bg-indigo-900/10">
                               {avgText}
@@ -2762,13 +2813,13 @@ function PatroliDetailContent() {
                               <td className="text-center py-2 font-bold text-green-700 dark:text-green-400 bg-green-50/50 dark:bg-green-900/10 border-l border-green-100 dark:border-green-900/30">
                                 <div className="flex flex-col items-center justify-center gap-1">
                                   <span>{sumCompliant}</span>
-                                  {sumCompliant + sumNonCompliant > 0 && <span className="text-[10px] font-medium bg-green-100 dark:bg-green-900/50 px-1.5 py-0.5 rounded-md leading-none">{Math.round((sumCompliant / (sumCompliant + sumNonCompliant)) * 100)}%</span>}
+                                  {sumCompliant + sumNonCompliant > 0 && <span className="text-[10px] font-medium bg-green-100 dark:bg-green-900/50 px-1.5 py-0.5 rounded-md leading-none">{(((sumCompliant / (sumCompliant + sumNonCompliant)) * 100).toFixed(2))}%</span>}
                                 </div>
                               </td>
                               <td className="text-center py-2 font-bold text-red-700 dark:text-red-400 bg-red-50/50 dark:bg-red-900/10 border-l border-red-100 dark:border-red-900/30">
                                 <div className="flex flex-col items-center justify-center gap-1">
                                   <span>{sumNonCompliant}</span>
-                                  {sumCompliant + sumNonCompliant > 0 && <span className="text-[10px] font-medium bg-red-100 dark:bg-red-900/50 px-1.5 py-0.5 rounded-md leading-none">{Math.round((sumNonCompliant / (sumCompliant + sumNonCompliant)) * 100)}%</span>}
+                                  {sumCompliant + sumNonCompliant > 0 && <span className="text-[10px] font-medium bg-red-100 dark:bg-red-900/50 px-1.5 py-0.5 rounded-md leading-none">{(((sumNonCompliant / (sumCompliant + sumNonCompliant)) * 100).toFixed(2))}%</span>}
                                 </div>
                               </td>
                             </>
@@ -2785,6 +2836,24 @@ function PatroliDetailContent() {
                           >
                             {row.keterangan.length > 40 ? row.keterangan.substring(0, 40) + "…" : row.keterangan}
                           </button>
+                        ) : <span className="text-gray-400">-</span>}
+                      </td>
+                      <td className="text-xs max-w-[120px] p-2">
+                        {row.photos && row.photos.length > 0 ? (
+                          <div className="flex flex-wrap gap-1">
+                            {row.photos.map((ph: any, pIdx: number) => (
+                              <a
+                                key={pIdx}
+                                href={ph.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="bg-blue-100 text-blue-700 hover:bg-blue-200 px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors"
+                                title="Lihat Foto"
+                              >
+                                {ph.label}
+                              </a>
+                            ))}
+                          </div>
                         ) : <span className="text-gray-400">-</span>}
                       </td>
                     </tr>
@@ -2806,7 +2875,7 @@ function PatroliDetailContent() {
                       </td>
                       {apdSummary?.map((s, i) => {
                         const t = s.ya + s.tidak;
-                        return <td key={i} className="text-center border-r border-gray-200 dark:border-slate-700">{t > 0 ? ((s.ya / t) * 100).toFixed(0) + "%" : "0%"}</td>;
+                        return <td key={i} className="text-center border-r border-gray-200 dark:border-slate-700">{t > 0 ? ((s.ya / t) * 100).toFixed(2) + "%" : "0%"}</td>;
                       })}
                       <td className="text-center font-bold bg-indigo-100/80 dark:bg-indigo-900/40 text-indigo-800 dark:text-indigo-300">
                         {(() => {
@@ -2815,9 +2884,10 @@ function PatroliDetailContent() {
                             totalYa += s.ya;
                             totalAns += (s.ya + s.tidak);
                           });
-                          return totalAns > 0 ? ((totalYa / totalAns) * 100).toFixed(0) + "%" : "-";
+                          return totalAns > 0 ? ((totalYa / totalAns) * 100).toFixed(2) + "%" : "-";
                         })()}
                       </td>
+                      <td></td>
                       <td></td>
                     </tr>
                   ) : (
@@ -2832,7 +2902,7 @@ function PatroliDetailContent() {
                             <div className="flex flex-col items-center justify-center gap-0.5">
                               <span>{s.totalCompliant}</span>
                               <span className="text-[10px] font-medium bg-indigo-200 dark:bg-indigo-800 text-indigo-900 dark:text-indigo-100 px-1 py-0.5 rounded leading-none">
-                                {Math.round((s.totalCompliant / s.totalKaryawan) * 100)}%
+                                {Number(((s.totalCompliant / s.totalKaryawan) * 100).toFixed(2))}%
                               </span>
                             </div>
                           ) : "-"}
@@ -2858,7 +2928,7 @@ function PatroliDetailContent() {
                         {(() => {
                           let totalNonCompliantSum = 0;
                           reportData.forEach(row => {
-                            row.patrols.forEach(p => {
+                            row.patrols.forEach((p: any) => {
                               if (p && row.jumlahKaryawan > 0) {
                                 const ansObj = p.answers.find((a: any) => a.label.includes("menggunakan APD") || a.label.includes("Kepatuhan"));
                                 if (ansObj && ansObj.jawaban !== "-" && ansObj.jawaban !== "N/A" && ansObj.jawaban !== "") {
@@ -2878,12 +2948,13 @@ function PatroliDetailContent() {
                             <div className="flex flex-col items-center justify-center gap-1">
                               <span>{totalNonCompliantSum}</span>
                               {apdOverallPct !== null && (
-                                <span className="text-[10px] bg-red-200 dark:bg-red-800 px-1.5 py-0.5 rounded-md leading-none">{100 - apdOverallPct}%</span>
+                                <span className="text-[10px] bg-red-200 dark:bg-red-800 px-1.5 py-0.5 rounded-md leading-none">{(100 - Number(apdOverallPct)).toFixed(2)}%</span>
                               )}
                             </div>
                           );
                         })()}
                       </td>
+                      <td></td>
                       <td></td>
                     </tr>
                   )}
@@ -2940,8 +3011,8 @@ function PatroliDetailContent() {
           </div>
 
           <div className="card overflow-hidden">
-            <div className="overflow-x-auto p-4">
-              <table className="data-table text-sm w-full text-left min-w-[800px]">
+            <div className="overflow-x-auto p-4" style={{ transform: "rotateX(180deg)" }}>
+              <table className="data-table text-sm w-full text-left min-w-[800px]" style={{ transform: "rotateX(180deg)" }}>
                 <thead>
                   <tr>
                     <th rowSpan={2} className="w-12 text-center align-middle border-r border-gray-200 dark:border-slate-700">No</th>
@@ -2972,6 +3043,7 @@ function PatroliDetailContent() {
                     <th rowSpan={2} className="w-24 text-center align-middle bg-red-50/50 dark:bg-red-900/20 text-red-700 dark:text-red-400 border-r border-gray-200 dark:border-slate-700">Tdk Patuh</th>
                     <th rowSpan={2} className="w-24 text-center align-middle bg-indigo-50/50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-400 border-r border-gray-200 dark:border-slate-700">Rata-rata (%)</th>
                     <th rowSpan={2} className="w-48 align-middle">Keterangan</th>
+                    <th rowSpan={2} className="w-32 align-middle text-xs border-l border-gray-200 dark:border-slate-700">Foto</th>
                   </tr>
                   <tr>
                     {activeB3Tab === "a" && (
@@ -2987,7 +3059,7 @@ function PatroliDetailContent() {
                   </tr>
                 </thead>
                 <tbody>
-                  {b3ReportData.map((row, i) => (
+                  {b3ReportData.map((row: any, i: number) => (
                     <tr key={i} className="hover:bg-gray-50 dark:hover:bg-slate-800/50">
                       <td className="text-center font-medium text-gray-500 border-r border-gray-200 dark:border-slate-700">{i + 1}</td>
                       <td className="font-medium text-gray-800 dark:text-gray-100 truncate border-r border-gray-200 dark:border-slate-700">{row.ruangan}</td>
@@ -3141,7 +3213,7 @@ function PatroliDetailContent() {
 
                         let avgText = "-";
                         let nonCompliantCount = totalExpected - compliantCount;
-                        if (totalExpected > 0) avgText = ((compliantCount / totalExpected) * 100).toFixed(0) + "%";
+                        if (totalExpected > 0) avgText = ((compliantCount / totalExpected) * 100).toFixed(2) + "%";
 
                         return (
                           <>
@@ -3170,6 +3242,30 @@ function PatroliDetailContent() {
                               >
                                 {ket.length > 40 ? ket.substring(0, 40) + "…" : ket}
                               </button>
+                            ) : <span className="text-gray-400">-</span>}
+                          </td>
+                        );
+                      })()}
+                      
+                      {(() => {
+                        const photos = activeB3Tab === "c" ? row.photosC : row.photosA;
+                        return (
+                          <td className="text-xs max-w-[120px] p-2 border-l border-gray-200 dark:border-slate-700">
+                            {photos && photos.length > 0 ? (
+                              <div className="flex flex-wrap gap-1">
+                                {photos.map((ph: any, pIdx: number) => (
+                                  <a
+                                    key={pIdx}
+                                    href={ph.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="bg-blue-100 text-blue-700 hover:bg-blue-200 px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors"
+                                    title="Lihat Foto"
+                                  >
+                                    {ph.label}
+                                  </a>
+                                ))}
+                              </div>
                             ) : <span className="text-gray-400">-</span>}
                           </td>
                         );
@@ -3215,7 +3311,7 @@ function PatroliDetailContent() {
                             <div className="flex flex-col items-center justify-center gap-1">
                               <span>{s.ya}</span>
                               <span className="text-[10px] font-bold bg-indigo-100 dark:bg-indigo-900/40 px-1.5 py-0.5 rounded-md leading-none text-indigo-700 dark:text-indigo-300">
-                                {((s.ya / t) * 100).toFixed(0)}%
+                                {((s.ya / t) * 100).toFixed(2)}%
                               </span>
                             </div>
                           ) : (
@@ -3235,7 +3331,7 @@ function PatroliDetailContent() {
                         return totalAns > 0 ? (
                           <div className="flex flex-col items-center justify-center gap-1">
                             <span>{totalYa}</span>
-                            <span className="text-[10px] bg-green-200 dark:bg-green-800 px-1.5 py-0.5 rounded-md leading-none">{((totalYa / totalAns) * 100).toFixed(0)}%</span>
+                            <span className="text-[10px] bg-green-200 dark:bg-green-800 px-1.5 py-0.5 rounded-md leading-none">{((totalYa / totalAns) * 100).toFixed(2)}%</span>
                           </div>
                         ) : "-";
                       })()}
@@ -3251,7 +3347,7 @@ function PatroliDetailContent() {
                         return totalAns > 0 ? (
                           <div className="flex flex-col items-center justify-center gap-1">
                             <span>{totalTidak}</span>
-                            <span className="text-[10px] bg-red-200 dark:bg-red-800 px-1.5 py-0.5 rounded-md leading-none">{((totalTidak / totalAns) * 100).toFixed(0)}%</span>
+                            <span className="text-[10px] bg-red-200 dark:bg-red-800 px-1.5 py-0.5 rounded-md leading-none">{((totalTidak / totalAns) * 100).toFixed(2)}%</span>
                           </div>
                         ) : "-";
                       })()}
@@ -3264,7 +3360,7 @@ function PatroliDetailContent() {
                           totalYa += s.ya;
                           totalAns += (s.ya + s.tidak);
                         });
-                        return totalAns > 0 ? ((totalYa / totalAns) * 100).toFixed(0) + "%" : "-";
+                        return totalAns > 0 ? ((totalYa / totalAns) * 100).toFixed(2) + "%" : "-";
                       })()}
                     </td>
                     <td></td>
@@ -3282,7 +3378,7 @@ function PatroliDetailContent() {
                         const s2 = b3Summary[1];
                         const totalYa = s1.ya + s2.ya;
                         const totalAns = s1.ya + s1.tidak + s2.ya + s2.tidak;
-                        return totalAns > 0 ? ((totalYa / totalAns) * 100).toFixed(0) + "%" : "0%";
+                        return totalAns > 0 ? ((totalYa / totalAns) * 100).toFixed(2) + "%" : "0%";
                       })()}
                     </td>
                     <td colSpan={2} className="text-center p-2 border-r border-gray-200 dark:border-slate-700 text-lg">
@@ -3292,7 +3388,7 @@ function PatroliDetailContent() {
                         const s4 = b3Summary[3];
                         const totalYa = s3.ya + s4.ya;
                         const totalAns = s3.ya + s3.tidak + s4.ya + s4.tidak;
-                        return totalAns > 0 ? ((totalYa / totalAns) * 100).toFixed(0) + "%" : "0%";
+                        return totalAns > 0 ? ((totalYa / totalAns) * 100).toFixed(2) + "%" : "0%";
                       })()}
                     </td>
                     <td colSpan={2} className="bg-indigo-200/30 dark:bg-indigo-800/20"></td>
@@ -3359,7 +3455,7 @@ function PatroliDetailContent() {
                   return {
                     sheetHeader: q.sheetHeader,
                     label: q.label,
-                    pct: (ya + tidak) > 0 ? Math.round((ya / (ya + tidak)) * 100) : null,
+                    pct: (ya + tidak) > 0 ? (((ya / (ya + tidak)) * 100).toFixed(2)) : null,
                     countYa: ya,
                     countTidak: tidak,
                     countNA: na,
@@ -3367,7 +3463,7 @@ function PatroliDetailContent() {
                   };
                 }) || [];
                 
-                const topicTotalPct = sumTotal > 0 ? Math.round((sumYa / sumTotal) * 100) : 0;
+                const topicTotalPct = sumTotal > 0 ? Number(((sumYa / sumTotal) * 100).toFixed(2)) : 0;
 
                 return (
                   <div key={topic.id} className="card overflow-hidden border-t-4 border-indigo-500">

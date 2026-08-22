@@ -144,7 +144,7 @@ export default function SubmissionTable({
 
   return (
     <div className="card overflow-hidden">
-      <div className="overflow-x-auto">
+      <div className="overflow-x-auto" style={{ transform: "rotateX(180deg)" }}>
         <table className="data-table text-sm" id="submission-table">
           <thead>
             <tr>
@@ -229,6 +229,7 @@ export default function SubmissionTable({
               ) : (
                 <th>Keterangan</th>
               )}
+              <th>Foto</th>
             </tr>
           </thead>
           <tbody>
@@ -516,7 +517,7 @@ export default function SubmissionTable({
                           }
                         });
                         
-                        const rowPct = maxCompliant === 0 ? "-" : Math.round((sumCompliant / maxCompliant) * 100) + "%";
+                        const rowPct = maxCompliant === 0 ? "-" : Number(((sumCompliant / maxCompliant) * 100).toFixed(2)) + "%";
                         
                         return (
                           <>
@@ -555,7 +556,7 @@ export default function SubmissionTable({
                           }
                         });
                         
-                        const rowPct = maxCompliant === 0 ? "-" : Math.round((sumCompliant / maxCompliant) * 100) + "%";
+                        const rowPct = maxCompliant === 0 ? "-" : Number(((sumCompliant / maxCompliant) * 100).toFixed(2)) + "%";
                         
                         return (
                           <td className="text-center font-bold text-red-700 dark:text-red-400 bg-red-50/30 dark:bg-red-900/10 border-l-2 border-red-100 dark:border-red-900/50">
@@ -574,60 +575,72 @@ export default function SubmissionTable({
 
                   {isB3 ? (
                     <>
-                      {/* Kolom a+b: B3 + Spill Kit */}
-                      <td className="text-gray-600 dark:text-gray-300 min-w-[200px]" data-photo-url={sub.photoUrl || ""}>
+                      <td className="text-gray-600 dark:text-gray-300 min-w-[200px]">
                         {tagPrefix && <span className="font-semibold text-amber-600 dark:text-amber-500">{tagPrefix}</span>}
-                        {sub.description && <span>{sub.description} </span>}
-                        {sub.photoUrl && (
+                        {sub.description && <span>{sub.description}</span>}
+                        {!tagPrefix && !sub.description && "-"}
+                      </td>
+                      {(() => {
+                        const ewDesc = sub.secondaryDescription || "";
+                        return (
+                          <td className="text-gray-600 dark:text-gray-300 min-w-[200px]">
+                            {ewDesc ? <span>{ewDesc}</span> : "-"}
+                          </td>
+                        );
+                      })()}
+                      <td className="text-gray-600 dark:text-gray-300 min-w-[120px]">
+                        {(() => {
+                          const hasPrimary = !!sub.photoUrl;
+                          const hasSecondary = !!sub.secondaryPhotoUrl;
+                          if (!hasPrimary && !hasSecondary) return "-";
+                          
+                          return (
+                            <div className="flex flex-col gap-1">
+                              {hasPrimary && (
+                                <a
+                                  href={sub.photoUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center gap-1 font-medium whitespace-nowrap"
+                                >
+                                  📷 {isB3 ? "Foto B3" : "Foto"}
+                                </a>
+                              )}
+                              {hasSecondary && (
+                                <a
+                                  href={sub.secondaryPhotoUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center gap-1 font-medium whitespace-nowrap"
+                                >
+                                  📷 Foto Eyewasher
+                                </a>
+                              )}
+                            </div>
+                          );
+                        })()}
+                      </td>
+                    </>
+                  ) : (
+                    <>
+                      <td className="text-gray-600 dark:text-gray-300 min-w-[200px]">
+                        {tagPrefix && <span className="font-semibold text-amber-600 dark:text-amber-500">{tagPrefix}</span>}
+                        {sub.description && <span>{sub.description}</span>}
+                        {!tagPrefix && !sub.description && "-"}
+                      </td>
+                      <td className="text-gray-600 dark:text-gray-300 min-w-[120px]">
+                        {sub.photoUrl ? (
                           <a
                             href={sub.photoUrl}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center gap-1 font-medium ml-1 whitespace-nowrap"
+                            className="text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center gap-1 font-medium whitespace-nowrap"
                           >
                             📷 Lihat Foto
                           </a>
-                        )}
-                        {!tagPrefix && !sub.description && !sub.photoUrl && "-"}
+                        ) : "-"}
                       </td>
-                      {/* Kolom c: Eyewasher & Bodywasher */}
-                      {(() => {
-                        const ewDesc = sub.secondaryDescription || "";
-                        const ewPhoto = sub.secondaryPhotoUrl || "";
-                        return (
-                          <td className="text-gray-600 dark:text-gray-300 min-w-[200px]" data-photo-url={ewPhoto || ""}>
-                            {ewDesc && <span>{ewDesc} </span>}
-                            {ewPhoto && (
-                              <a
-                                href={ewPhoto}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center gap-1 font-medium ml-1 whitespace-nowrap"
-                              >
-                                📷 Lihat Foto
-                              </a>
-                            )}
-                            {!ewDesc && !ewPhoto && "-"}
-                          </td>
-                        );
-                      })()}
                     </>
-                  ) : (
-                    <td className="text-gray-600 dark:text-gray-300 min-w-[200px]" data-photo-url={sub.photoUrl || ""}>
-                      {tagPrefix && <span className="font-semibold text-amber-600 dark:text-amber-500">{tagPrefix}</span>}
-                      {sub.description && <span>{sub.description} </span>}
-                      {sub.photoUrl && (
-                        <a
-                          href={sub.photoUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center gap-1 font-medium ml-1 whitespace-nowrap"
-                        >
-                          📷 Lihat Foto
-                        </a>
-                      )}
-                      {!tagPrefix && !sub.description && !sub.photoUrl && "-"}
-                    </td>
                   )}
                 </tr>
               );
@@ -713,7 +726,7 @@ export default function SubmissionTable({
                   
                   const isSaranaProteksi = moduleDef.slug === "sarana-proteksi";
                   const total = qr.countYa + qr.countTidak; // countTidak sudah termasuk Setengah dan TidakAda
-                  const yaPct = total > 0 ? Math.round((qr.countYa / total) * 100) : 0;
+                  const yaPct = total > 0 ? Number(((qr.countYa / total) * 100).toFixed(2)) : 0;
                   
                   // Hitung nilai dan persentase untuk indikator ke-2 dan ke-3
                   let countIndikator2 = qr.countTidak;
@@ -730,8 +743,8 @@ export default function SubmissionTable({
                     labelIndikator3 = "Tidak"; // Tidak Ada diubah labelnya jadi Tidak
                   }
                   
-                  const pctIndikator2 = total > 0 ? Math.round((countIndikator2 / total) * 100) : 0;
-                  const pctIndikator3 = total > 0 ? Math.round((countIndikator3 / total) * 100) : 0;
+                  const pctIndikator2 = total > 0 ? Number(((countIndikator2 / total) * 100).toFixed(2)) : 0;
+                  const pctIndikator3 = total > 0 ? Number(((countIndikator3 / total) * 100).toFixed(2)) : 0;
 
                   const hasData = total > 0 || countIndikator3 > 0;
 
@@ -852,7 +865,7 @@ export default function SubmissionTable({
                     });
                   });
                   
-                  const allPct = allExpected > 0 ? Math.round((allCompliant / allExpected) * 100) : null;
+                  const allPct = allExpected > 0 ? Number(((allCompliant / allExpected) * 100).toFixed(2)) : null;
                   
                   return (
                     <>

@@ -232,7 +232,7 @@ export default function QuestionHorizontalChart({
                       fontWeight="bold"
                       textAnchor={width > 25 ? "end" : "middle"}
                     >
-                      {value}%
+                      {Number(Number(value).toFixed(2))}%
                     </text>
                   );
                 }}
@@ -245,10 +245,10 @@ export default function QuestionHorizontalChart({
                 dataKey="gap"
                 content={(props: any) => {
                   const { x, y, width, height, value } = props;
-                  if (!value || value <= 0) return null;
+                  if (!value || value < 2) return null; // hide label if < 2%
                   return (
                     <text x={x + width / 2} y={y + height / 2 + 4} fill="#000" fontSize="11" fontWeight="bold" textAnchor="middle">
-                      {value}%
+                      {Number(Number(value).toFixed(2))}%
                     </text>
                   );
                 }}
@@ -261,10 +261,10 @@ export default function QuestionHorizontalChart({
                 dataKey="remaining"
                 content={(props: any) => {
                   const { x, y, width, height, value } = props;
-                  if (!value || value <= 0) return null;
+                  if (!value || value < 2) return null; // hide label if < 2%
                   return (
                     <text x={x + width / 2} y={y + height / 2 + 4} fill="#fff" fontSize="11" fontWeight="bold" textAnchor="middle">
-                      {value}%
+                      {Number(Number(value).toFixed(2))}%
                     </text>
                   );
                 }}

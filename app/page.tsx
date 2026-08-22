@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, Suspense, useRef } from "react";
 import LockMonthButton from "@/components/LockMonthButton";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { getCurrentBulan, formatBulan, formatTimestamp, downloadWithSavePrompt } from "@/lib/utils";
+import { getCurrentBulan, formatBulan, formatTimestamp, downloadWithSavePrompt, fmtPctVal } from "@/lib/utils";
 import { pctStatus } from "@/lib/analytics";
 import LoadingScreen from "@/components/LoadingScreen";
 
@@ -58,15 +58,15 @@ function PctBadge({ pct, logOnly, targetPct = 90 }: { pct: number | null; logOnl
   if (logOnly) return <span className="badge-blue">Log Kegiatan</span>;
   if (pct === null) return <span className="badge-gray">Belum Ada Data</span>;
   const status = pctStatus(pct, targetPct);
-  if (status === "green") return <span className="badge-green">✓ {pct}%</span>;
-  if (status === "yellow") return <span className="badge-yellow">⚠ {pct}%</span>;
-  return <span className="badge-red">✗ {pct}%</span>;
+  if (status === "green") return <span className="badge-green">✓ {fmtPctVal(pct)}</span>;
+  if (status === "yellow") return <span className="badge-yellow">⚠ {fmtPctVal(pct)}</span>;
+  return <span className="badge-red">✗ {fmtPctVal(pct)}</span>;
 }
 
 function TrendIndicator({ trend }: { trend: number | null }) {
   if (trend === null) return null;
-  if (trend > 0) return <span className="text-green-600 text-xs font-semibold">↑ +{trend}%</span>;
-  if (trend < 0) return <span className="text-red-600 text-xs font-semibold">↓ {trend}%</span>;
+  if (trend > 0) return <span className="text-green-600 text-xs font-semibold">↑ +{fmtPctVal(trend)}</span>;
+  if (trend < 0) return <span className="text-red-600 text-xs font-semibold">↓ {fmtPctVal(trend)}</span>;
   return <span className="text-gray-400 text-xs">→ Tetap</span>;
 }
 

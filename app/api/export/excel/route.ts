@@ -20,7 +20,7 @@ export const dynamic = 'force-dynamic';
 
 import { MODULES, MODULE_BY_SLUG, HARIAN_ABBREV } from "@/lib/modules";
 import { computeModuleAggregate } from "@/lib/analytics";
-import { getCurrentBulan, formatBulan, formatTanggal, formatMaybeDate } from "@/lib/utils";
+import { getCurrentBulan, formatBulan, formatTanggal, formatTanggalPendek, formatMaybeDate } from "@/lib/utils";
 
 const HEADER_FILL: ExcelJS.Fill = {
   type: "pattern",
@@ -352,7 +352,7 @@ export async function GET(request: Request) {
 
            const ketParts = patrols.map((p, idx) => {
              const desc = buildKeteranganForExport(p, false, false, []);
-             return desc !== "-" ? `P${idx + 1}: ${desc}` : null;
+             return desc !== "-" ? `P${idx + 1} (${formatTanggalPendek(p.row?.tanggalPemantauan || p.row?.timestamp)}): ${desc}` : null;
            }).filter(Boolean);
            const keterangan = ketParts.length > 0 ? ketParts.join(" ; ") : "-";
 
@@ -481,7 +481,7 @@ export async function GET(request: Request) {
               }
             });
           }
-          exRowData.rata = totalRow > 0 ? ((yaRow / totalRow) * 100).toFixed(0) + '%' : '-';
+          exRowData.rata = totalRow > 0 ? ((yaRow / totalRow) * 100).toFixed(2) + '%' : '-';
           
           const photos: {label: string, url: string}[] = [];
           for (let colIdx = 0; colIdx < 10; colIdx++) {
@@ -527,15 +527,15 @@ export async function GET(request: Request) {
           questions.forEach((_, qIdx) => {
             const s = summaryData[colIdx * nQ + qIdx];
             const total = s.ya + s.tidak;
-            patuhRow[`p${colIdx + 1}_q${qIdx}`] = total > 0 ? `${s.ya} (${((s.ya / total) * 100).toFixed(0)}%)` : '-';
-            tidakRow[`p${colIdx + 1}_q${qIdx}`] = total > 0 ? `${s.tidak} (${((s.tidak / total) * 100).toFixed(0)}%)` : '-';
+            patuhRow[`p${colIdx + 1}_q${qIdx}`] = total > 0 ? `${s.ya} (${((s.ya / total) * 100).toFixed(2)}%)` : '-';
+            tidakRow[`p${colIdx + 1}_q${qIdx}`] = total > 0 ? `${s.tidak} (${((s.tidak / total) * 100).toFixed(2)}%)` : '-';
           });
         }
         const totalYaSum = summaryData.reduce((acc, s) => acc + s.ya, 0);
         const totalTidakSum = summaryData.reduce((acc, s) => acc + s.tidak, 0);
         const grandTotal = totalYaSum + totalTidakSum;
-        patuhRow.rata = grandTotal > 0 ? `${totalYaSum} (${((totalYaSum / grandTotal) * 100).toFixed(0)}%)` : '-';
-        tidakRow.rata = grandTotal > 0 ? `${totalTidakSum} (${((totalTidakSum / grandTotal) * 100).toFixed(0)}%)` : '-';
+        patuhRow.rata = grandTotal > 0 ? `${totalYaSum} (${((totalYaSum / grandTotal) * 100).toFixed(2)}%)` : '-';
+        tidakRow.rata = grandTotal > 0 ? `${totalTidakSum} (${((totalTidakSum / grandTotal) * 100).toFixed(2)}%)` : '-';
 
         const patuhExRow = sheet.addRow(patuhRow);
         patuhExRow.eachCell(cell => {
@@ -811,7 +811,7 @@ export async function GET(request: Request) {
                 sumCompliant += compliant;
               }
             });
-            const rowPct = maxCompliant === 0 ? "-" : Math.round((sumCompliant / maxCompliant) * 100) + "%";
+            const rowPct = maxCompliant === 0 ? "-" : Number(((sumCompliant / maxCompliant) * 100).toFixed(2)) + "%";
             vals.push(rowPct);
           }
 
@@ -956,9 +956,9 @@ export async function GET(request: Request) {
               const countSetengah = qr.countSetengah ?? 0;
               const countTidakAda = qr.countTidakAda ?? 0;
               const total = qr.countYa + countSetengah + countTidakAda;
-              const yaPct = total > 0 ? Math.round((qr.countYa / total) * 100) : 0;
-              const setengahPct = total > 0 ? Math.round((countSetengah / total) * 100) : 0;
-              const tidakPct = total > 0 ? Math.round((countTidakAda / total) * 100) : 0;
+              const yaPct = total > 0 ? Number(((qr.countYa / total) * 100).toFixed(2)) : 0;
+              const setengahPct = total > 0 ? Number(((countSetengah / total) * 100).toFixed(2)) : 0;
+              const tidakPct = total > 0 ? Number(((countTidakAda / total) * 100).toFixed(2)) : 0;
               summaryRow.getCell(qColIdx).value =
                 `✓ Ya: ${qr.countYa} (${yaPct}%)\n⚠️ Kurang Baik: ${countSetengah} (${setengahPct}%)\n✗ Tidak Ada: ${countTidakAda} (${tidakPct}%)`;
             } else if (isHydrantMod) {
@@ -968,15 +968,15 @@ export async function GET(request: Request) {
               const countTidakAda = qr.countTidakAda ?? 0;
               const countTidakOnly = qr.countTidak - countTidakAda; // actual "Tidak" (tanpa TidakAda)
               const total = qr.countYa + qr.countTidak; // total benar (countTidak sudah termasuk TidakAda)
-              const yaPct = total > 0 ? Math.round((qr.countYa / total) * 100) : 0;
-              const tidakPct = total > 0 ? Math.round((countTidakOnly / total) * 100) : 0;
-              const tidakAdaPct = total > 0 ? Math.round((countTidakAda / total) * 100) : 0;
+              const yaPct = total > 0 ? Number(((qr.countYa / total) * 100).toFixed(2)) : 0;
+              const tidakPct = total > 0 ? Number(((countTidakOnly / total) * 100).toFixed(2)) : 0;
+              const tidakAdaPct = total > 0 ? Number(((countTidakAda / total) * 100).toFixed(2)) : 0;
               summaryRow.getCell(qColIdx).value =
                 `✓ Ya: ${qr.countYa} (${yaPct}%)\n✗ Tidak: ${countTidakOnly} (${tidakPct}%)\n🚫 Tdk ada hydrant: ${countTidakAda} (${tidakAdaPct}%)`;
             } else {
               const total = qr.countYa + qr.countTidak;
-              const yaPct = total > 0 ? Math.round((qr.countYa / total) * 100) : 0;
-              const tidakPct = total > 0 ? Math.round((qr.countTidak / total) * 100) : 0;
+              const yaPct = total > 0 ? Number(((qr.countYa / total) * 100).toFixed(2)) : 0;
+              const tidakPct = total > 0 ? Number(((qr.countTidak / total) * 100).toFixed(2)) : 0;
               summaryRow.getCell(qColIdx).value = `Ya: ${qr.countYa} (${yaPct}%)\nTidak: ${qr.countTidak} (${tidakPct}%)`;
             }
           } else {

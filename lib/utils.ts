@@ -41,6 +41,37 @@ export function formatTanggal(input: string | Date): string {
   return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
 }
 
+/** Format a date string short as "22 Agt 2026" */
+export function formatTanggalPendek(input: string | Date | undefined): string {
+  if (!input) return "-";
+  const MONTHS = [
+    "Jan","Feb","Mar","Apr","Mei","Jun",
+    "Jul","Agt","Sep","Okt","Nov","Des",
+  ];
+  let d: Date;
+  if (input instanceof Date) {
+    d = input;
+  } else {
+    const gsMatch = String(input).match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+    if (gsMatch) {
+      let part1 = parseInt(gsMatch[1]);
+      let part2 = parseInt(gsMatch[2]);
+      let year = parseInt(gsMatch[3]);
+      let month = part2;
+      let day = part1;
+      if (part1 <= 12 && part2 > 12) {
+         month = part1;
+         day = part2;
+      }
+      d = new Date(year, month - 1, day);
+    } else {
+      d = new Date(String(input));
+    }
+  }
+  if (isNaN(d.getTime())) return String(input);
+  return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+}
+
 /** Format "YYYY-MM" as "Juli 2026" */
 export function formatBulan(bulan: string): string {
   const MONTHS = [
@@ -90,6 +121,46 @@ export function formatMaybeDate(val: string): string {
     return formatTanggal(val);
   }
   return val;
+}
+
+/**
+ * Format a ratio (numerator / denominator × 100) as a percentage string
+ * with exactly 2 decimal places. Returns "-" if denominator is 0 or null.
+ *
+ * Examples:
+ *   fmtPct(85, 100)   → "85.00%"
+ *   fmtPct(1, 3)      → "33.33%"
+ *   fmtPct(0, 0)      → "-"
+ */
+export function fmtPct(numerator: number, denominator: number, fallback = "-"): string {
+  if (!denominator || denominator === 0) return fallback;
+  return ((numerator / denominator) * 100).toFixed(2) + "%";
+}
+
+/**
+ * Format a pre-computed percentage number as a string with 2 decimal places.
+ * Accepts null (returns "-").
+ *
+ * Examples:
+ *   fmtPctVal(85)    → "85.00%"
+ *   fmtPctVal(null)  → "-"
+ */
+export function fmtPctVal(pct: number | null, fallback = "-"): string {
+  if (pct === null || pct === undefined) return fallback;
+  return Number(pct).toFixed(2) + "%";
+}
+
+/**
+ * Compute a percentage value rounded to 2 decimal places (as a number).
+ * Useful for storing/comparing values that still need to display as 2dp.
+ *
+ * Examples:
+ *   calcPct(1, 3)  → 33.33
+ *   calcPct(0, 0)  → null
+ */
+export function calcPct(numerator: number, denominator: number): number | null {
+  if (!denominator || denominator === 0) return null;
+  return parseFloat(((numerator / denominator) * 100).toFixed(2));
 }
 
 /**
