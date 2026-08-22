@@ -145,7 +145,7 @@ export default function SubmissionTable({
   return (
     <div className="card overflow-hidden">
       <div className="overflow-x-auto" style={{ transform: "rotateX(180deg)" }}>
-        <table className="data-table text-sm" id="submission-table">
+        <table className="data-table text-sm" id="submission-table" style={{ transform: "rotateX(180deg)" }}>
           <thead>
             <tr>
               <th className="w-10">No</th>

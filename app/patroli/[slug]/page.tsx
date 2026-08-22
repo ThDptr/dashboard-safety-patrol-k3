@@ -2917,8 +2917,8 @@ function PatroliDetailContent() {
                           return (
                             <div className="flex flex-col items-center justify-center gap-1">
                               <span>{totalCompliantSum}</span>
-                              {apdOverallPct !== null && (
-                                <span className="text-[10px] bg-green-200 dark:bg-green-800 px-1.5 py-0.5 rounded-md leading-none">{apdOverallPct}%</span>
+                              {apdKepatuhanPct !== null && (
+                                <span className="text-[10px] bg-green-200 dark:bg-green-800 px-1.5 py-0.5 rounded-md leading-none">{apdKepatuhanPct}%</span>
                               )}
                             </div>
                           );
@@ -2947,8 +2947,8 @@ function PatroliDetailContent() {
                           return (
                             <div className="flex flex-col items-center justify-center gap-1">
                               <span>{totalNonCompliantSum}</span>
-                              {apdOverallPct !== null && (
-                                <span className="text-[10px] bg-red-200 dark:bg-red-800 px-1.5 py-0.5 rounded-md leading-none">{(100 - Number(apdOverallPct)).toFixed(2)}%</span>
+                              {apdKepatuhanPct !== null && (
+                                <span className="text-[10px] bg-red-200 dark:bg-red-800 px-1.5 py-0.5 rounded-md leading-none">{(100 - Number(apdKepatuhanPct)).toFixed(2)}%</span>
                               )}
                             </div>
                           );
