@@ -1,10 +1,8 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
-import Link from "next/link";
-import Image from "next/image";
 import LoadingScreen from "@/components/LoadingScreen";
-import { formatTanggal, formatBulan, getCurrentBulan, getPrevBulan, downloadWithSavePrompt } from "@/lib/utils";
+import { formatTanggal, downloadWithSavePrompt } from "@/lib/utils";
 
 
 export default function TemuanPage() {
@@ -88,9 +86,7 @@ export default function TemuanPage() {
     }
   };
 
-  const handleDeleteRow = (id: string) => {
-    setData((prev) => prev.filter((r) => r.id !== id));
-  };
+
 
   if (loading && data.length === 0) return <LoadingScreen />;
 
@@ -190,7 +186,6 @@ export default function TemuanPage() {
                     <th className="w-48">Kategori</th>
                     <th>Temuan/Keluhan</th>
                     <th className="w-32 text-center">Foto</th>
-                    {!isExporting && <th className="w-16 text-center hide-print">Aksi</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -220,17 +215,7 @@ export default function TemuanPage() {
                           <span className="text-gray-400 text-xs">-</span>
                         )}
                       </td>
-                      {!isExporting && (
-                        <td className="text-center hide-print">
-                          <button
-                            onClick={() => handleDeleteRow(row.id)}
-                            className="p-1 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors"
-                            title="Hapus baris ini dari laporan (tidak menghapus dari database)"
-                          >
-                            🗑️
-                          </button>
-                        </td>
-                      )}
+
                     </tr>
                   ))}
                 </tbody>

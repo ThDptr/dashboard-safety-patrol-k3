@@ -233,14 +233,47 @@ export async function GET(request: Request) {
 
         // 3. Process the resulting submissions
         aggregate.submissions.forEach((sub) => {
+          // ─── PERBAIKAN BUG: Deskripsi bocor antar modul ─────────────────────
+          // Semua modul HARIAN berbagi baris form yang sama (scope DALAM_HARIAN).
+          // Artinya kolom "Deskripsi Temuan - Keluhan" milik Sosialisasi bisa
+          // terbaca oleh modul Elektrik, APD, dll. yang looping ke baris yang sama.
+          //
+          // Solusi: untuk modul non-logOnly (bukan Sosialisasi), hanya anggap
+          // sebagai "temuan" jika ada ketidakpatuhan nyata (jawaban Tidak/Setengah)
+          // ATAU ada foto yang spesifik ke modul itu (bukan fallback ke keluhan umum).
+          // Ini memastikan deskripsi Sosialisasi tidak bocor ke modul lain.
+          // ─────────────────────────────────────────────────────────────────────
+
+          const isLogOnly = matchedModule.logOnly === true;
+
+          // Untuk modul logOnly (Sosialisasi), gunakan logika lama: ambil foto/deskripsi apa saja
+          // Untuk modul non-logOnly: hanya lanjutkan jika ada ketidakpatuhan nyata atau foto spesifik modul
+          if (!isLogOnly) {
+            const hasNonCompliance = sub.answers.some(
+              (a) => a.jawaban === "Tidak" || a.jawaban === "Setengah" || a.jawaban === "TidakAda"
+            );
+            const hasModuleSpecificPhoto = !!sub.photoUrl; // photoUrl dari descriptionHeader modul itu sendiri
+            const hasModuleTags = sub.tags && sub.tags.length > 0;
+
+            // Jika tidak ada ketidakpatuhan, tidak ada foto modul, dan tidak ada tags → skip
+            // Ini mencegah deskripsi "Keluhan" Sosialisasi bocor ke modul Elektrik/APD/dll.
+            if (!hasNonCompliance && !hasModuleSpecificPhoto && !hasModuleTags) {
+              return;
+            }
+          }
+
           let fullDescription = sub.description || "";
-          if (!fullDescription) {
+
+          // Untuk logOnly: coba fallback ke kolom Keluhan umum jika deskripsi kosong
+          if (!fullDescription && isLogOnly) {
             const fallbackDesc = getField(sub.row, "Deskripsi Temuan - Keluhan") || getField(sub.row, "Keluhan");
             if (fallbackDesc) fullDescription = fallbackDesc;
           }
 
           let photoUrl = sub.photoUrl || "";
-          if (!photoUrl) {
+
+          // Untuk logOnly: coba fallback ke kolom Foto Keluhan umum jika foto kosong
+          if (!photoUrl && isLogOnly) {
             const fallbackPhoto = getField(sub.row, "Foto Temuan - Keluhan") || getField(sub.row, "Upload Foto");
             if (fallbackPhoto) photoUrl = fallbackPhoto;
           }
