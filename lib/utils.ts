@@ -2,6 +2,36 @@
 // lib/utils.ts — Date formatting, number helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Parse a date/timestamp string into a Date that represents WIB (UTC+7) local time
+ * via its UTC fields. Use getUTC* methods on the result to read the correct WIB date.
+ */
+function parseToWIBDate(input: string): Date {
+  // DD/MM/YYYY or MM/DD/YYYY from Google Sheets → treat as local WIB, build as UTC
+  const gsMatch = input.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (gsMatch) {
+    const part1 = parseInt(gsMatch[1]);
+    const part2 = parseInt(gsMatch[2]);
+    const year  = parseInt(gsMatch[3]);
+    // part1 > 12 → must be DD/MM/YYYY
+    // part1 <= 12 && part2 > 12 → must be MM/DD/YYYY
+    // default: DD/MM/YYYY (Indonesian locale)
+    let month = part2;
+    let day   = part1;
+    if (part1 <= 12 && part2 > 12) {
+      month = part1;
+      day   = part2;
+    }
+    // Construct as UTC so getUTC* reads the correct WIB date parts
+    return new Date(Date.UTC(year, month - 1, day));
+  }
+
+  // ISO string or unknown → parse as UTC then shift +7h to get WIB
+  const raw = new Date(input);
+  if (isNaN(raw.getTime())) return raw; // let caller handle NaN
+  return new Date(raw.getTime() + 7 * 60 * 60 * 1000);
+}
+
 /** Format a date string as "22 Juli 2026" */
 export function formatTanggal(input: string | Date): string {
   if (!input) return "-";
@@ -9,36 +39,15 @@ export function formatTanggal(input: string | Date): string {
     "Januari","Februari","Maret","April","Mei","Juni",
     "Juli","Agustus","September","Oktober","November","Desember",
   ];
-  let d: Date;
   if (input instanceof Date) {
-    d = input;
-  } else {
-    // Handle formats like DD/MM/YYYY or MM/DD/YYYY from Google Sheets
-    const gsMatch = String(input).match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-    if (gsMatch) {
-      let part1 = parseInt(gsMatch[1]);
-      let part2 = parseInt(gsMatch[2]);
-      let year = parseInt(gsMatch[3]);
-      
-      // If part1 > 12, it MUST be DD/MM/YYYY. 
-      // If part2 > 12, it MUST be MM/DD/YYYY.
-      // Default to assuming DD/MM/YYYY for Indonesian users if both <= 12, unless part1 looks like a US month.
-      let month = part2;
-      let day = part1;
-      
-      // If part1 is a valid month and part2 is > 12, it's definitely MM/DD/YYYY
-      if (part1 <= 12 && part2 > 12) {
-         month = part1;
-         day = part2;
-      }
-      
-      d = new Date(year, month - 1, day);
-    } else {
-      d = new Date(input);
-    }
+    // Assume the Date object was constructed in local time; read via local methods
+    if (isNaN(input.getTime())) return "-";
+    return `${input.getDate()} ${MONTHS[input.getMonth()]} ${input.getFullYear()}`;
   }
+  const d = parseToWIBDate(String(input));
   if (isNaN(d.getTime())) return String(input);
-  return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+  // Use getUTC* — because parseToWIBDate encodes WIB time into the UTC fields
+  return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
 }
 
 /** Format a date string short as "22 Agt 2026" */
@@ -48,28 +57,13 @@ export function formatTanggalPendek(input: string | Date | undefined): string {
     "Jan","Feb","Mar","Apr","Mei","Jun",
     "Jul","Agt","Sep","Okt","Nov","Des",
   ];
-  let d: Date;
   if (input instanceof Date) {
-    d = input;
-  } else {
-    const gsMatch = String(input).match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-    if (gsMatch) {
-      let part1 = parseInt(gsMatch[1]);
-      let part2 = parseInt(gsMatch[2]);
-      let year = parseInt(gsMatch[3]);
-      let month = part2;
-      let day = part1;
-      if (part1 <= 12 && part2 > 12) {
-         month = part1;
-         day = part2;
-      }
-      d = new Date(year, month - 1, day);
-    } else {
-      d = new Date(String(input));
-    }
+    if (isNaN(input.getTime())) return "-";
+    return `${input.getDate()} ${MONTHS[input.getMonth()]} ${input.getFullYear()}`;
   }
+  const d = parseToWIBDate(String(input));
   if (isNaN(d.getTime())) return String(input);
-  return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+  return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
 }
 
 /** Format "YYYY-MM" as "Juli 2026" */

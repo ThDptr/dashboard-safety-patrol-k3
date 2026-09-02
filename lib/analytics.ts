@@ -175,6 +175,33 @@ export function getNeedsAttention(
   return groups;
 }
 
+// ─── B3 Washer Helper ───────────────────────────────────────────────────────────
+
+/**
+ * Parse a raw sheet value for "Eyewasher berfungsi baik" / "Bodywasher berfungsi baik".
+ * Supports backward-compatible Ya/Tidak (Aug data) AND new numeric answers.
+ *
+ * @param rawVal  Raw string from the sheet cell
+ * @param jumlah  Total unit count (Jumlah Eyewasher / Jumlah Bodywasher)
+ * @returns { patuh, tidakPatuh } or null if the answer should be excluded (N/A / empty)
+ */
+export function parseB3WasherAnswer(
+  rawVal: string,
+  jumlah: number
+): { patuh: number; tidakPatuh: number } | null {
+  const v = (rawVal || "").trim();
+  if (!v || v === "-" || v === "N/A" || v === "") return null;
+  const num = parseInt(v, 10);
+  if (!isNaN(num)) {
+    // Numeric answer: num = jumlah yang berfungsi baik
+    const patuh = Math.max(0, Math.min(num, jumlah || 0));
+    return { patuh, tidakPatuh: Math.max(0, (jumlah || 0) - patuh) };
+  }
+  if (v === "Ya") return { patuh: jumlah || 0, tidakPatuh: 0 };
+  if (v === "Tidak") return { patuh: 0, tidakPatuh: jumlah || 0 };
+  return null;
+}
+
 // ─── Main Aggregation ─────────────────────────────────────────────────────────
 
 /**
@@ -360,6 +387,21 @@ export function computeModuleAggregate(
           const compliantCount = Math.max(0, expectedCount - nonCompliantCount);
           ya += compliantCount;
           tidak += (expectedCount - compliantCount);
+        }
+      } else if (module.slug === "b3" && (q.label === "Eyewasher berfungsi baik" || q.label === "Bodywasher berfungsi baik")) {
+        // Numeric answer support: rawVal could be a number (unit berfungsi) or Ya/Tidak (backward compat)
+        const rawVal = getField(row, q.sheetHeader);
+        const jumlahLabel = q.label === "Eyewasher berfungsi baik" ? "Jumlah Eyewasher" : "Jumlah Bodywasher";
+        const jumlahExt = module.extraFields?.find(ef => ef.label === jumlahLabel);
+        const jumlah = jumlahExt ? (parseInt(getField(row, jumlahExt.sheetHeader) || "0", 10) || 0) : 0;
+        const result = parseB3WasherAnswer(rawVal, jumlah);
+        if (result) {
+          ya += result.patuh;
+          tidak += result.tidakPatuh;
+        } else {
+          const v = (rawVal || "").trim();
+          if (v === "N/A") na++;
+          else empty++;
         }
       } else {
         if (ans === "Ya") {
@@ -557,6 +599,16 @@ export function computeModuleAggregate(
       const raw = getField(row, ef.sheetHeader);
       return { label: ef.label, value: raw, raw };
     });
+
+    // B3: expose raw string values of washer questions in extras for client-side numeric handling
+    if (module.slug === "b3") {
+      for (const q of module.questions) {
+        if (q.label === "Eyewasher berfungsi baik" || q.label === "Bodywasher berfungsi baik") {
+          const rawVal = getField(row, q.sheetHeader);
+          extras.push({ label: `${q.label} (raw)`, value: rawVal, raw: rawVal });
+        }
+      }
+    }
 
     let secondaryDescription = "";
     let secondaryPhotoUrl = "";

@@ -354,6 +354,24 @@ function PatroliDetailContent() {
     return parts.length > 0 ? parts.join(" | ") : null;
   };
 
+  /**
+   * Parse a raw sheet value for "Eyewasher/Bodywasher berfungsi baik".
+   * Supports backward-compatible Ya/Tidak (Aug data) AND new numeric answers.
+   * Returns { patuh, tidakPatuh } or null if should be excluded (N/A / empty).
+   */
+  const parseB3WasherAnswer = (rawVal: string, jumlah: number): { patuh: number; tidakPatuh: number } | null => {
+    const v = (rawVal || "").trim();
+    if (!v || v === "-" || v === "N/A" || v === "") return null;
+    const num = parseInt(v, 10);
+    if (!isNaN(num)) {
+      const patuh = Math.max(0, Math.min(num, jumlah || 0));
+      return { patuh, tidakPatuh: Math.max(0, (jumlah || 0) - patuh) };
+    }
+    if (v === "Ya") return { patuh: jumlah || 0, tidakPatuh: 0 };
+    if (v === "Tidak") return { patuh: 0, tidakPatuh: jumlah || 0 };
+    return null;
+  };
+
   // ─── OPTIMIZED DATA GROUPING ───
   const groupedSubmissionsByLoc = useMemo(() => {
     if (!data?.submissions) return {};
@@ -690,37 +708,62 @@ function PatroliDetailContent() {
       [0, 1].forEach((colIdx) => {
         const p = row.patrols[colIdx];
         if (p) {
-          const answerObj1 = p.answers.find((a: any) => a.label.includes(h1.split(" ")[0]));
-          if (answerObj1) {
-            const ans = answerObj1.jawaban;
-            if (ans !== "-" && ans !== "N/A" && ans !== "") {
-              const expected = getExpected(row, h1);
-              if (ans === "Ya") {
-                summary[colIdx].ya += expected;
-              } else if (ans === "Tidak") {
-                const nonCompliant = (p.tags && p.tags.length > 0) ? p.tags.length : expected;
-                summary[colIdx].ya += Math.max(0, expected - nonCompliant);
-                summary[colIdx].tidak += nonCompliant;
-              }
-            } else if (ans === "N/A") {
+          if (activeB3Tab === "c") {
+            // Tab c — Eyewasher: baca raw value dari extras
+            const rawEye = p.extras?.find((e: any) => e.label === "Eyewasher berfungsi baik (raw)")?.value || "";
+            const jumlahEye = parseInt(p.extras?.find((e: any) => e.label === "Jumlah Eyewasher")?.value || "0", 10) || 0;
+            const eyeRes = parseB3WasherAnswer(rawEye, jumlahEye);
+            if (eyeRes) {
+              summary[colIdx].ya += eyeRes.patuh;
+              summary[colIdx].tidak += eyeRes.tidakPatuh;
+            } else if ((rawEye || "").trim() === "N/A") {
               summary[colIdx].na++;
             }
-          }
 
-          const answerObj2 = p.answers.find((a: any) => a.label.includes(h2.split(" ")[0]));
-          if (answerObj2) {
-            const ans = answerObj2.jawaban;
-            if (ans !== "-" && ans !== "N/A" && ans !== "") {
-              const expected = getExpected(row, h2);
-              if (ans === "Ya") {
-                summary[2 + colIdx].ya += expected;
-              } else if (ans === "Tidak") {
-                const nonCompliant = (p.tags && p.tags.length > 0) ? p.tags.length : expected;
-                summary[2 + colIdx].ya += Math.max(0, expected - nonCompliant);
-                summary[2 + colIdx].tidak += nonCompliant;
-              }
-            } else if (ans === "N/A") {
+            // Tab c — Bodywasher
+            const rawBody = p.extras?.find((e: any) => e.label === "Bodywasher berfungsi baik (raw)")?.value || "";
+            const jumlahBody = parseInt(p.extras?.find((e: any) => e.label === "Jumlah Bodywasher")?.value || "0", 10) || 0;
+            const bodyRes = parseB3WasherAnswer(rawBody, jumlahBody);
+            if (bodyRes) {
+              summary[2 + colIdx].ya += bodyRes.patuh;
+              summary[2 + colIdx].tidak += bodyRes.tidakPatuh;
+            } else if ((rawBody || "").trim() === "N/A") {
               summary[2 + colIdx].na++;
+            }
+          } else {
+            // Tab a & b — existing logic
+            const answerObj1 = p.answers.find((a: any) => a.label.includes(h1.split(" ")[0]));
+            if (answerObj1) {
+              const ans = answerObj1.jawaban;
+              if (ans !== "-" && ans !== "N/A" && ans !== "") {
+                const expected = getExpected(row, h1);
+                if (ans === "Ya") {
+                  summary[colIdx].ya += expected;
+                } else if (ans === "Tidak") {
+                  const nonCompliant = (p.tags && p.tags.length > 0) ? p.tags.length : expected;
+                  summary[colIdx].ya += Math.max(0, expected - nonCompliant);
+                  summary[colIdx].tidak += nonCompliant;
+                }
+              } else if (ans === "N/A") {
+                summary[colIdx].na++;
+              }
+            }
+
+            const answerObj2 = p.answers.find((a: any) => a.label.includes(h2.split(" ")[0]));
+            if (answerObj2) {
+              const ans = answerObj2.jawaban;
+              if (ans !== "-" && ans !== "N/A" && ans !== "") {
+                const expected = getExpected(row, h2);
+                if (ans === "Ya") {
+                  summary[2 + colIdx].ya += expected;
+                } else if (ans === "Tidak") {
+                  const nonCompliant = (p.tags && p.tags.length > 0) ? p.tags.length : expected;
+                  summary[2 + colIdx].ya += Math.max(0, expected - nonCompliant);
+                  summary[2 + colIdx].tidak += nonCompliant;
+                }
+              } else if (ans === "N/A") {
+                summary[2 + colIdx].na++;
+              }
             }
           }
         }
@@ -822,13 +865,35 @@ function PatroliDetailContent() {
         return sumTotal > 0 ? Number(((sumYa / sumTotal) * 100).toFixed(2)) : null;
       };
 
+      // Eyewasher / Bodywasher — gunakan raw value + jumlah dari extras
+      const calcB3WasherPct = (washerLabel: string) => {
+        let sumYa = 0;
+        let sumTotal = 0;
+        b3ReportData.forEach(row => {
+          [0, 1].forEach(colIdx => {
+            const p = row.patrols[colIdx];
+            if (p) {
+              const rawVal = p.extras?.find((e: any) => e.label === `${washerLabel} (raw)`)?.value || "";
+              const jumlahKey = washerLabel === "Eyewasher berfungsi baik" ? "Jumlah Eyewasher" : "Jumlah Bodywasher";
+              const jumlah = parseInt(p.extras?.find((e: any) => e.label === jumlahKey)?.value || "0", 10) || 0;
+              const res = parseB3WasherAnswer(rawVal, jumlah);
+              if (res) {
+                sumYa += res.patuh;
+                sumTotal += res.patuh + res.tidakPatuh;
+              }
+            }
+          });
+        });
+        return sumTotal > 0 ? Number(((sumYa / sumTotal) * 100).toFixed(2)) : null;
+      };
+
       results.forEach((qr: any) => {
         if (qr.label.includes("Penyimpanan B3")) qr.pct = calcB3Pct("Penyimpanan B3");
         else if (qr.label.includes("Ketersediaan SDS")) qr.pct = calcB3Pct("Ketersediaan SDS");
         else if (qr.label.includes("Ketersediaan Spill Kit")) qr.pct = calcB3Pct("Ketersediaan Spill Kit");
         else if (qr.label.includes("Kelengkapan Spill Kit")) qr.pct = calcB3Pct("Kelengkapan Spill Kit");
-        else if (qr.label.includes("Eyewasher")) qr.pct = calcB3Pct("Eyewasher");
-        else if (qr.label.includes("Bodywasher")) qr.pct = calcB3Pct("Bodywasher");
+        else if (qr.label === "Eyewasher berfungsi baik") qr.pct = calcB3WasherPct("Eyewasher berfungsi baik");
+        else if (qr.label === "Bodywasher berfungsi baik") qr.pct = calcB3WasherPct("Bodywasher berfungsi baik");
       });
     }
 
@@ -1454,64 +1519,81 @@ function PatroliDetailContent() {
           let totalExpected = 0;
           let compliantCount = 0;
 
-          const getExpected = () => {
-             if (activeB3Tab === "a") return row.seharusnyaLemari > 0 ? row.seharusnyaLemari : (parseInt(String(row.terlihatLemari), 10) || 0);
-             if (activeB3Tab === "c") return parseInt(String(row.eyewasher), 10) || 0;
-             return 1;
-          };
-          const expectedQ1 = getExpected();
-          const getExpectedQ2 = () => {
-             if (activeB3Tab === "a") return row.seharusnyaLemari > 0 ? row.seharusnyaLemari : (parseInt(String(row.terlihatLemari), 10) || 0);
-             if (activeB3Tab === "c") return parseInt(String(row.bodywasher), 10) || 0;
-             return 1;
-          };
-          const expectedQ2 = getExpectedQ2();
-
+          // Q1: Eyewasher / Penyimpanan B3 / Spill Kit
           [0, 1].forEach((colIdx) => {
             const p = row.patrols[colIdx];
             let ans: string | number = "-";
             if (p) {
-              const labelToMatch = activeB3Tab === "a" ? "Penyimpanan B3" : activeB3Tab === "b" ? "Ketersediaan Spill Kit" : "Eyewasher";
-              const answerObj = p.answers.find((a: any) => a.label.includes(labelToMatch));
-              const rawAns = answerObj ? answerObj.jawaban : "-";
-              
-              if (rawAns !== "-" && rawAns !== "N/A" && rawAns !== "") {
-                totalExpected += expectedQ1;
-                if (rawAns === "Ya") {
-                  ans = expectedQ1;
-                  compliantCount += expectedQ1;
-                } else if (rawAns === "Tidak") {
-                  const nonCompliant = (p.tags && p.tags.length > 0) ? p.tags.length : expectedQ1;
-                  ans = Math.max(0, expectedQ1 - nonCompliant);
-                  compliantCount += ans;
+              if (activeB3Tab === "c") {
+                // Tab c \u2014 gunakan raw extras untuk support angka
+                const rawEye = p.extras?.find((e: any) => e.label === "Eyewasher berfungsi baik (raw)")?.value || "";
+                const jumlahEye = parseInt(p.extras?.find((e: any) => e.label === "Jumlah Eyewasher")?.value || "0", 10) || 0;
+                const eyeRes = parseB3WasherAnswer(rawEye, jumlahEye);
+                if (eyeRes) {
+                  ans = eyeRes.patuh;
+                  compliantCount += eyeRes.patuh;
+                  totalExpected += eyeRes.patuh + eyeRes.tidakPatuh;
+                } else {
+                  ans = (rawEye || "").trim() || "-";
                 }
               } else {
-                ans = rawAns;
+                const labelToMatch = activeB3Tab === "a" ? "Penyimpanan B3" : "Ketersediaan Spill Kit";
+                const answerObj = p.answers.find((a: any) => a.label.includes(labelToMatch));
+                const rawAns = answerObj ? answerObj.jawaban : "-";
+                const expectedQ1 = activeB3Tab === "a"
+                  ? (row.seharusnyaLemari > 0 ? row.seharusnyaLemari : (parseInt(String(row.terlihatLemari), 10) || 0))
+                  : 1;
+                if (rawAns !== "-" && rawAns !== "N/A" && rawAns !== "") {
+                  totalExpected += expectedQ1;
+                  if (rawAns === "Ya") { ans = expectedQ1; compliantCount += expectedQ1; }
+                  else if (rawAns === "Tidak") {
+                    const nonCompliant = (p.tags && p.tags.length > 0) ? p.tags.length : expectedQ1;
+                    ans = Math.max(0, expectedQ1 - nonCompliant);
+                    compliantCount += ans as number;
+                  }
+                } else {
+                  ans = rawAns;
+                }
               }
             }
             rowData[`p1_${colIdx + 1}`] = ans;
           });
 
+          // Q2: Bodywasher / Ketersediaan SDS / Kelengkapan Spill Kit
           [0, 1].forEach((colIdx) => {
             const p = row.patrols[colIdx];
             let ans: string | number = "-";
             if (p) {
-              const labelToMatch = activeB3Tab === "a" ? "Ketersediaan SDS" : activeB3Tab === "b" ? "Kelengkapan Spill Kit" : "Bodywasher";
-              const answerObj = p.answers.find((a: any) => a.label.includes(labelToMatch));
-              const rawAns = answerObj ? answerObj.jawaban : "-";
-
-              if (rawAns !== "-" && rawAns !== "N/A" && rawAns !== "") {
-                totalExpected += expectedQ2;
-                if (rawAns === "Ya") {
-                  ans = expectedQ2;
-                  compliantCount += expectedQ2;
-                } else if (rawAns === "Tidak") {
-                  const nonCompliant = (p.tags && p.tags.length > 0) ? p.tags.length : expectedQ2;
-                  ans = Math.max(0, expectedQ2 - nonCompliant);
-                  compliantCount += ans;
+              if (activeB3Tab === "c") {
+                // Tab c \u2014 gunakan raw extras untuk support angka
+                const rawBody = p.extras?.find((e: any) => e.label === "Bodywasher berfungsi baik (raw)")?.value || "";
+                const jumlahBody = parseInt(p.extras?.find((e: any) => e.label === "Jumlah Bodywasher")?.value || "0", 10) || 0;
+                const bodyRes = parseB3WasherAnswer(rawBody, jumlahBody);
+                if (bodyRes) {
+                  ans = bodyRes.patuh;
+                  compliantCount += bodyRes.patuh;
+                  totalExpected += bodyRes.patuh + bodyRes.tidakPatuh;
+                } else {
+                  ans = (rawBody || "").trim() || "-";
                 }
               } else {
-                ans = rawAns;
+                const labelToMatch = activeB3Tab === "a" ? "Ketersediaan SDS" : "Kelengkapan Spill Kit";
+                const answerObj = p.answers.find((a: any) => a.label.includes(labelToMatch));
+                const rawAns = answerObj ? answerObj.jawaban : "-";
+                const expectedQ2 = activeB3Tab === "a"
+                  ? (row.seharusnyaLemari > 0 ? row.seharusnyaLemari : (parseInt(String(row.terlihatLemari), 10) || 0))
+                  : 1;
+                if (rawAns !== "-" && rawAns !== "N/A" && rawAns !== "") {
+                  totalExpected += expectedQ2;
+                  if (rawAns === "Ya") { ans = expectedQ2; compliantCount += expectedQ2; }
+                  else if (rawAns === "Tidak") {
+                    const nonCompliant = (p.tags && p.tags.length > 0) ? p.tags.length : expectedQ2;
+                    ans = Math.max(0, expectedQ2 - nonCompliant);
+                    compliantCount += ans as number;
+                  }
+                } else {
+                  ans = rawAns;
+                }
               }
             }
             rowData[`p2_${colIdx + 1}`] = ans;
@@ -3079,43 +3161,54 @@ function PatroliDetailContent() {
 
                       {[...Array(2)].map((_, colIdx) => {
                         const p = row.patrols[colIdx];
-                        let ans = "-";
                         let valDisplay: string | number = "-";
+                        let badgeColor = "text-gray-400";
 
                         if (p) {
-                          const labelToMatch = activeB3Tab === "a" ? "Penyimpanan B3" : activeB3Tab === "b" ? "Ketersediaan Spill Kit" : "Eyewasher";
-                          const answerObj = p.answers.find((a: any) => a.label.includes(labelToMatch));
-                          ans = answerObj ? answerObj.jawaban : "-";
+                          if (activeB3Tab === "c") {
+                            // Tab c — Eyewasher: baca raw value dari extras
+                            const rawEye = p.extras?.find((e: any) => e.label === "Eyewasher berfungsi baik (raw)")?.value || "";
+                            const jumlahEye = parseInt(p.extras?.find((e: any) => e.label === "Jumlah Eyewasher")?.value || "0", 10) || 0;
+                            const eyeRes = parseB3WasherAnswer(rawEye, jumlahEye);
+                            if (eyeRes !== null) {
+                              valDisplay = eyeRes.patuh;
+                              badgeColor = eyeRes.tidakPatuh > 0
+                                ? "text-red-600 bg-red-50 dark:bg-red-900/20 px-2 py-1 rounded font-bold"
+                                : "text-green-600 bg-green-50 dark:bg-green-900/20 px-2 py-1 rounded font-bold";
+                            } else if ((rawEye || "").trim() === "N/A") {
+                              valDisplay = "N/A";
+                              badgeColor = "text-gray-600 bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded font-medium";
+                            }
+                          } else {
+                            const labelToMatch = activeB3Tab === "a" ? "Penyimpanan B3" : "Ketersediaan Spill Kit";
+                            const answerObj = p.answers.find((a: any) => a.label.includes(labelToMatch));
+                            const ans = answerObj ? answerObj.jawaban : "-";
 
-                          if (ans !== "-" && ans !== "N/A" && ans !== "") {
-                            let expected = 1;
-                            if (activeB3Tab === "a") expected = row.seharusnyaLemari > 0 ? row.seharusnyaLemari : (parseInt(row.terlihatLemari as string, 10) || 0);
-
-                            if (activeB3Tab === "a") {
-                              if (ans === "Ya") {
-                                valDisplay = expected;
-                              } else if (ans === "Tidak") {
-                                const nonCompliant = (p.tags && p.tags.length > 0) ? p.tags.length : expected;
-                                valDisplay = Math.max(0, expected - nonCompliant);
+                            if (ans !== "-" && ans !== "N/A" && ans !== "") {
+                              if (activeB3Tab === "a") {
+                                const expected = row.seharusnyaLemari > 0 ? row.seharusnyaLemari : (parseInt(row.terlihatLemari as string, 10) || 0);
+                                if (ans === "Ya") {
+                                  valDisplay = expected;
+                                } else if (ans === "Tidak") {
+                                  const nonCompliant = (p.tags && p.tags.length > 0) ? p.tags.length : expected;
+                                  valDisplay = Math.max(0, expected - nonCompliant);
+                                }
+                                const expected2 = row.seharusnyaLemari > 0 ? row.seharusnyaLemari : (parseInt(row.terlihatLemari as string, 10) || 0);
+                                if (typeof valDisplay === "number") {
+                                  badgeColor = valDisplay === expected2
+                                    ? "text-green-600 bg-green-50 dark:bg-green-900/20 px-2 py-1 rounded font-bold"
+                                    : "text-red-600 bg-red-50 dark:bg-red-900/20 px-2 py-1 rounded font-bold";
+                                }
+                              } else {
+                                valDisplay = ans;
+                                if (ans === "Ya") badgeColor = "text-green-600 bg-green-50 dark:bg-green-900/20 px-2 py-1 rounded font-medium";
+                                if (ans === "Tidak") badgeColor = "text-red-600 bg-red-50 dark:bg-red-900/20 px-2 py-1 rounded font-medium";
                               }
                             } else {
                               valDisplay = ans;
+                              if (ans === "N/A") badgeColor = "text-gray-600 bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded font-medium";
                             }
-                          } else {
-                            valDisplay = ans;
                           }
-                        }
-
-                        let badgeColor = "text-gray-400";
-                        if (activeB3Tab === "a" && (valDisplay !== "-" && valDisplay !== "N/A" && typeof valDisplay === "number")) {
-                          let expected = row.seharusnyaLemari > 0 ? row.seharusnyaLemari : (parseInt(row.terlihatLemari as string, 10) || 0);
-
-                          if (valDisplay === expected) badgeColor = "text-green-600 bg-green-50 dark:bg-green-900/20 px-2 py-1 rounded font-bold";
-                          else badgeColor = "text-red-600 bg-red-50 dark:bg-red-900/20 px-2 py-1 rounded font-bold";
-                        } else {
-                          if (ans === "Ya") badgeColor = "text-green-600 bg-green-50 dark:bg-green-900/20 px-2 py-1 rounded font-medium";
-                          if (ans === "Tidak") badgeColor = "text-red-600 bg-red-50 dark:bg-red-900/20 px-2 py-1 rounded font-medium";
-                          if (ans === "N/A") badgeColor = "text-gray-600 bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded font-medium";
                         }
 
                         return (
@@ -3127,43 +3220,54 @@ function PatroliDetailContent() {
 
                       {[...Array(2)].map((_, colIdx) => {
                         const p = row.patrols[colIdx];
-                        let ans = "-";
                         let valDisplay: string | number = "-";
+                        let badgeColor = "text-gray-400";
 
                         if (p) {
-                          const labelToMatch = activeB3Tab === "a" ? "Ketersediaan SDS" : activeB3Tab === "b" ? "Kelengkapan Spill Kit" : "Bodywasher";
-                          const answerObj = p.answers.find((a: any) => a.label.includes(labelToMatch));
-                          ans = answerObj ? answerObj.jawaban : "-";
+                          if (activeB3Tab === "c") {
+                            // Tab c — Bodywasher: baca raw value dari extras
+                            const rawBody = p.extras?.find((e: any) => e.label === "Bodywasher berfungsi baik (raw)")?.value || "";
+                            const jumlahBody = parseInt(p.extras?.find((e: any) => e.label === "Jumlah Bodywasher")?.value || "0", 10) || 0;
+                            const bodyRes = parseB3WasherAnswer(rawBody, jumlahBody);
+                            if (bodyRes !== null) {
+                              valDisplay = bodyRes.patuh;
+                              badgeColor = bodyRes.tidakPatuh > 0
+                                ? "text-red-600 bg-red-50 dark:bg-red-900/20 px-2 py-1 rounded font-bold"
+                                : "text-green-600 bg-green-50 dark:bg-green-900/20 px-2 py-1 rounded font-bold";
+                            } else if ((rawBody || "").trim() === "N/A") {
+                              valDisplay = "N/A";
+                              badgeColor = "text-gray-600 bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded font-medium";
+                            }
+                          } else {
+                            const labelToMatch = activeB3Tab === "a" ? "Ketersediaan SDS" : "Kelengkapan Spill Kit";
+                            const answerObj = p.answers.find((a: any) => a.label.includes(labelToMatch));
+                            const ans = answerObj ? answerObj.jawaban : "-";
 
-                          if (ans !== "-" && ans !== "N/A" && ans !== "") {
-                            let expected = 1;
-                            if (activeB3Tab === "a") expected = row.seharusnyaLemari > 0 ? row.seharusnyaLemari : (parseInt(row.terlihatLemari as string, 10) || 0);
-
-                            if (activeB3Tab === "a") {
-                              if (ans === "Ya") {
-                                valDisplay = expected;
-                              } else if (ans === "Tidak") {
-                                const nonCompliant = (p.tags && p.tags.length > 0) ? p.tags.length : expected;
-                                valDisplay = Math.max(0, expected - nonCompliant);
+                            if (ans !== "-" && ans !== "N/A" && ans !== "") {
+                              if (activeB3Tab === "a") {
+                                const expected = row.seharusnyaLemari > 0 ? row.seharusnyaLemari : (parseInt(row.terlihatLemari as string, 10) || 0);
+                                if (ans === "Ya") {
+                                  valDisplay = expected;
+                                } else if (ans === "Tidak") {
+                                  const nonCompliant = (p.tags && p.tags.length > 0) ? p.tags.length : expected;
+                                  valDisplay = Math.max(0, expected - nonCompliant);
+                                }
+                                const expected2 = row.seharusnyaLemari > 0 ? row.seharusnyaLemari : (parseInt(row.terlihatLemari as string, 10) || 0);
+                                if (typeof valDisplay === "number") {
+                                  badgeColor = valDisplay === expected2
+                                    ? "text-green-600 bg-green-50 dark:bg-green-900/20 px-2 py-1 rounded font-bold"
+                                    : "text-red-600 bg-red-50 dark:bg-red-900/20 px-2 py-1 rounded font-bold";
+                                }
+                              } else {
+                                valDisplay = ans;
+                                if (ans === "Ya") badgeColor = "text-green-600 bg-green-50 dark:bg-green-900/20 px-2 py-1 rounded font-medium";
+                                if (ans === "Tidak") badgeColor = "text-red-600 bg-red-50 dark:bg-red-900/20 px-2 py-1 rounded font-medium";
                               }
                             } else {
                               valDisplay = ans;
+                              if (ans === "N/A") badgeColor = "text-gray-600 bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded font-medium";
                             }
-                          } else {
-                            valDisplay = ans;
                           }
-                        }
-
-                        let badgeColor = "text-gray-400";
-                        if (activeB3Tab === "a" && (valDisplay !== "-" && valDisplay !== "N/A" && typeof valDisplay === "number")) {
-                          let expected = row.seharusnyaLemari > 0 ? row.seharusnyaLemari : (parseInt(row.terlihatLemari as string, 10) || 0);
-
-                          if (valDisplay === expected) badgeColor = "text-green-600 bg-green-50 dark:bg-green-900/20 px-2 py-1 rounded font-bold";
-                          else badgeColor = "text-red-600 bg-red-50 dark:bg-red-900/20 px-2 py-1 rounded font-bold";
-                        } else {
-                          if (ans === "Ya") badgeColor = "text-green-600 bg-green-50 dark:bg-green-900/20 px-2 py-1 rounded font-medium";
-                          if (ans === "Tidak") badgeColor = "text-red-600 bg-red-50 dark:bg-red-900/20 px-2 py-1 rounded font-medium";
-                          if (ans === "N/A") badgeColor = "text-gray-600 bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded font-medium";
                         }
 
                         return (
@@ -3182,30 +3286,49 @@ function PatroliDetailContent() {
                             const lbl1 = activeB3Tab === "a" ? "Penyimpanan B3" : activeB3Tab === "b" ? "Ketersediaan Spill Kit" : "Eyewasher";
                             const lbl2 = activeB3Tab === "a" ? "Ketersediaan SDS" : activeB3Tab === "b" ? "Kelengkapan Spill Kit" : "Bodywasher";
 
-                            const a1 = p.answers.find((a: any) => a.label.includes(lbl1));
-                            const a2 = p.answers.find((a: any) => a.label.includes(lbl2));
-
-                            const getExpected = (lbl: string) => {
-                              if (lbl === "Penyimpanan B3" || lbl === "Ketersediaan SDS") return row.seharusnyaLemari > 0 ? row.seharusnyaLemari : (parseInt(String(row.terlihatLemari), 10) || 0);
-                              return 1;
-                            };
-
-                            if (a1 && a1.jawaban !== "N/A" && a1.jawaban !== "-" && a1.jawaban !== "") {
-                              const exp = getExpected(lbl1);
-                              totalExpected += exp;
-                              if (a1.jawaban === "Ya") compliantCount += exp;
-                              else if (a1.jawaban === "Tidak") {
-                                const nonCompliant = (p.tags && p.tags.length > 0) ? p.tags.length : exp;
-                                compliantCount += Math.max(0, exp - nonCompliant);
+                            if (activeB3Tab === "c") {
+                              // Tab c — gunakan raw extras
+                              const rawEye = p.extras?.find((e: any) => e.label === "Eyewasher berfungsi baik (raw)")?.value || "";
+                              const jumlahEye = parseInt(p.extras?.find((e: any) => e.label === "Jumlah Eyewasher")?.value || "0", 10) || 0;
+                              const eyeRes = parseB3WasherAnswer(rawEye, jumlahEye);
+                              if (eyeRes) {
+                                compliantCount += eyeRes.patuh;
+                                totalExpected += eyeRes.patuh + eyeRes.tidakPatuh;
                               }
-                            }
-                            if (a2 && a2.jawaban !== "N/A" && a2.jawaban !== "-" && a2.jawaban !== "") {
-                              const exp = getExpected(lbl2);
-                              totalExpected += exp;
-                              if (a2.jawaban === "Ya") compliantCount += exp;
-                              else if (a2.jawaban === "Tidak") {
-                                const nonCompliant = (p.tags && p.tags.length > 0) ? p.tags.length : exp;
-                                compliantCount += Math.max(0, exp - nonCompliant);
+
+                              const rawBody = p.extras?.find((e: any) => e.label === "Bodywasher berfungsi baik (raw)")?.value || "";
+                              const jumlahBody = parseInt(p.extras?.find((e: any) => e.label === "Jumlah Bodywasher")?.value || "0", 10) || 0;
+                              const bodyRes = parseB3WasherAnswer(rawBody, jumlahBody);
+                              if (bodyRes) {
+                                compliantCount += bodyRes.patuh;
+                                totalExpected += bodyRes.patuh + bodyRes.tidakPatuh;
+                              }
+                            } else {
+                              const a1 = p.answers.find((a: any) => a.label.includes(lbl1));
+                              const a2 = p.answers.find((a: any) => a.label.includes(lbl2));
+
+                              const getExpected = (lbl: string) => {
+                                if (lbl === "Penyimpanan B3" || lbl === "Ketersediaan SDS") return row.seharusnyaLemari > 0 ? row.seharusnyaLemari : (parseInt(String(row.terlihatLemari), 10) || 0);
+                                return 1;
+                              };
+
+                              if (a1 && a1.jawaban !== "N/A" && a1.jawaban !== "-" && a1.jawaban !== "") {
+                                const exp = getExpected(lbl1);
+                                totalExpected += exp;
+                                if (a1.jawaban === "Ya") compliantCount += exp;
+                                else if (a1.jawaban === "Tidak") {
+                                  const nonCompliant = (p.tags && p.tags.length > 0) ? p.tags.length : exp;
+                                  compliantCount += Math.max(0, exp - nonCompliant);
+                                }
+                              }
+                              if (a2 && a2.jawaban !== "N/A" && a2.jawaban !== "-" && a2.jawaban !== "") {
+                                const exp = getExpected(lbl2);
+                                totalExpected += exp;
+                                if (a2.jawaban === "Ya") compliantCount += exp;
+                                else if (a2.jawaban === "Tidak") {
+                                  const nonCompliant = (p.tags && p.tags.length > 0) ? p.tags.length : exp;
+                                  compliantCount += Math.max(0, exp - nonCompliant);
+                                }
                               }
                             }
                           }

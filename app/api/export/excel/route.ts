@@ -730,8 +730,26 @@ export async function GET(request: Request) {
                 const nonCompliant = (sub.tags && sub.tags.length > 0) ? sub.tags.length : expected;
                 return Math.max(0, expected - nonCompliant);
               }
+            } else if (qLbl === "Eyewasher berfungsi baik" || qLbl === "Bodywasher berfungsi baik") {
+              // Numeric answer support: raw value bisa berupa angka atau Ya/Tidak
+              const rawExt = sub.extras?.find((x: any) => x.label === `${qLbl} (raw)`);
+              const rawVal = rawExt ? rawExt.value : ans;
+              const jumlahLabel = qLbl === "Eyewasher berfungsi baik" ? "Jumlah Eyewasher" : "Jumlah Bodywasher";
+              const jumlahExt = sub.extras?.find((x: any) => x.label === jumlahLabel);
+              const jumlah = parseInt(jumlahExt?.value || "0", 10) || 0;
+
+              const v = (rawVal || "").trim();
+              if (!v || v === "-" || v === "N/A" || v === "") return "N/A";
+              const num = parseInt(v, 10);
+              if (!isNaN(num)) {
+                return Math.max(0, Math.min(num, jumlah));
+              }
+              if (v === "Ya") return jumlah;
+              if (v === "Tidak") return 0;
+              return v;
             }
           }
+
 
           if (isAPD) {
             const mRow = masterData.find((m: any) => m.Ruangan?.trim().toLowerCase() === (sub.location || "").trim().toLowerCase());
