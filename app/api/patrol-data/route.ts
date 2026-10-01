@@ -48,12 +48,18 @@ export async function GET(request: Request) {
          else if (moduleSlug === "luar-gedung") targetMaster = "luar";
       }
 
+      // For APAR, we need both ruangan AND luar master data (for merged aggregation)
+      const needsLuarMaster = mode === "module" && moduleSlug === "apar";
+      const needsBothMasters = mode === "summary"; // summary needs all master data for APAR card
+
       // Fetch both data sources concurrently to cut loading time in half
-      const [patrolRes, masterRes, topikRes, pertanyaanRes] = await Promise.allSettled([
+      const [patrolRes, masterRes, topikRes, pertanyaanRes, luarMasterRes] = await Promise.allSettled([
         fetchPatrolData(),
         fetchMasterData(targetMaster, bulan),
         fetchMasterData("topik", bulan),
-        fetchMasterData("pertanyaan", bulan)
+        fetchMasterData("pertanyaan", bulan),
+        // Fetch luar master if APAR or summary (needed for merged APAR calc)
+        (needsLuarMaster || needsBothMasters) ? fetchMasterData("luar", bulan) : Promise.resolve([]),
       ]);
       
       if (patrolRes.status === "fulfilled") {
@@ -66,6 +72,11 @@ export async function GET(request: Request) {
         masterData = masterRes.value;
       } else {
         console.error("Failed to fetch master data in patrol-data API", masterRes.reason);
+      }
+
+      // Merge luar master data into masterData for APAR aggregation
+      if (luarMasterRes.status === "fulfilled" && luarMasterRes.value.length > 0) {
+        masterData = [...masterData, ...luarMasterRes.value];
       }
 
       if (topikRes.status === "fulfilled") {
@@ -179,6 +190,26 @@ export async function GET(request: Request) {
         extras: s.extras,
       }));
 
+      // Build merged submissions (Luar Gedung rows for APAR module)
+      const mergedSubmissions = (aggregate.mergedSubmissions ?? []).map((s) => ({
+        timestamp: s.row.timestamp,
+        tanggalPemantauan: s.row.tanggalPemantauan,
+        namaPetugas: s.row.namaPetugas,
+        location: s.location,
+        ruangan: s.row.ruangan,
+        patroliKe: s.row.patroliKe,
+        answers: s.answers.map((a) => ({
+          sheetHeader: a.question.sheetHeader,
+          label: a.question.label,
+          jawaban: a.jawaban,
+        })),
+        description: s.description,
+        photoUrl: s.photoUrl,
+        tags: s.tags,
+        extras: s.extras,
+        isLuarGedung: true,
+      }));
+
       return NextResponse.json({
         bulan,
         module: {
@@ -205,6 +236,7 @@ export async function GET(request: Request) {
         })),
         submissions,
         submissionCount: submissions.length,
+        mergedSubmissions,
         masterData,
       });
     }

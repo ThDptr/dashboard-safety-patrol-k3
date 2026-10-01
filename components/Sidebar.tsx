@@ -129,12 +129,20 @@ function SidebarContent({ isOpen, onClose, isCollapsed, onToggleCollapse }: Side
         className="flex items-center gap-2 px-3 py-3.5 border-b"
         style={{ borderColor: "rgba(255,255,255,0.15)" }}
       >
-        <div className={`flex-shrink-0 flex items-center bg-white rounded-lg p-1 ${isCollapsed ? "mx-auto" : ""}`}>
+        <div className={`flex-shrink-0 flex items-center gap-1.5 bg-white rounded-lg p-1 ${isCollapsed ? "mx-auto" : ""}`}>
+          <Image
+            src="/Logo_ITERA.png"
+            alt="ITERA"
+            width={22}
+            height={22}
+            className="object-contain"
+          />
+          <div className="w-[1px] h-5 bg-gray-200" />
           <Image
             src="/K3_logo.png"
             alt="K3"
-            width={34}
-            height={30}
+            width={26}
+            height={24}
             className="object-contain"
           />
         </div>

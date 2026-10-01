@@ -82,6 +82,17 @@ export interface ModuleDef {
    * e.g. APD non-compliant units, B3 sub-units with issues.
    */
   badgeHeader?: string;
+  /**
+   * If set, data from this other module's scope will be MERGED into this module's
+   * aggregation using the question mapping defined in `mergedQuestionMap`.
+   * This enables APAR (Dalam) to include Luar Gedung APAR in its count.
+   */
+  mergedWithSlug?: string;
+  /**
+   * Maps this module's question labels to the merged module's question labels.
+   * Key = this module's question label, Value = merged module's question label.
+   */
+  mergedQuestionMap?: Record<string, string>;
 }
 
 // ============================================================================
@@ -178,6 +189,13 @@ const APAR: ModuleDef = {
   ],
   photoHeader: "Foto Temuan - APAR",
   descriptionHeader: "Deskripsi Temuan - APAR",
+  // Merge Luar Gedung APAR into this module's count for correct aggregation
+  mergedWithSlug: "luar-gedung",
+  mergedQuestionMap: {
+    "APAR - Terjangkau": "APAR Luar - Terjangkau",
+    "APAR - Rambu dan SOP terpasang": "APAR Luar - Rambu dan SOP",
+    "APAR - Kartu pemeliharaan terisi": "APAR Luar - Kartu pemeliharaan terisi",
+  },
 };
 
 const HYDRANT: ModuleDef = {

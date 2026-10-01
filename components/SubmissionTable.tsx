@@ -7,12 +7,14 @@ export default function SubmissionTable({
   questionResults,
   totalPct,
   masterData = [],
+  mergedSubmissions = [],
 }: {
   moduleDef: any;
   submissions: any[];
   questionResults?: any[];
   totalPct?: number | null;
   masterData?: any[];
+  mergedSubmissions?: any[];
 }) {
   const isPCRA = moduleDef.slug === "pcra";
   const isLuarGedung = moduleDef.slug === "luar-gedung";
@@ -45,8 +47,7 @@ export default function SubmissionTable({
   };
 
   const extrasBefore = React.useMemo(() => {
-    if (moduleDef.slug === "apar") return ["Jumlah APAR Powder", "Jumlah APAR CO2"];
-    if (isLuarGedung) return ["Jumlah APAR Powder 6 kg", "Jumlah APAR Powder 25 kg", "Jumlah APAR CO2"];
+    if (moduleDef.slug === "apar" || isLuarGedung) return ["Jumlah APAR Powder", "Jumlah APAR CO2"];
     if (isB3) return ["Jumlah Lemari B3"];
     return [];
   }, [moduleDef.slug, isLuarGedung, isB3]);
@@ -164,11 +165,17 @@ export default function SubmissionTable({
                   {extrasBefore.map((l) => (
                     isMasterComparison ? (
                       <React.Fragment key={l}>
-                        <th className="text-center bg-blue-50/50 dark:bg-blue-900/10 text-blue-800 dark:text-blue-300">
+                        <th 
+                          className="text-center bg-blue-50/50 dark:bg-blue-900/10 text-blue-800 dark:text-blue-300"
+                          colSpan={l === "Jumlah APAR Powder" && isAPAR ? 2 : 1}
+                        >
                           <div className="text-[10px] opacity-70 uppercase tracking-wider">Seharusnya</div>
                           <div>{l}</div>
                         </th>
-                        <th className="text-center bg-emerald-50/50 dark:bg-emerald-900/10 text-emerald-800 dark:text-emerald-300">
+                        <th 
+                          className="text-center bg-emerald-50/50 dark:bg-emerald-900/10 text-emerald-800 dark:text-emerald-300"
+                          colSpan={l === "Jumlah APAR Powder" && isAPAR ? 2 : 1}
+                        >
                           <div className="text-[10px] opacity-70 uppercase tracking-wider">Terlihat</div>
                           <div>{l}</div>
                         </th>
@@ -270,6 +277,7 @@ export default function SubmissionTable({
                     <>
                       {extrasBefore.map((l) => {
                         const valTerlihat = getExtraValue(sub, l);
+
                         if (isMasterComparison) {
                           const mRow = getMasterRow(sub.location);
                           let valSeharusnyaStr = mRow && mRow[l] !== undefined && mRow[l] !== "" ? String(mRow[l]) : "-";
@@ -287,14 +295,20 @@ export default function SubmissionTable({
 
                           return (
                             <React.Fragment key={l}>
-                              <td className="text-center font-semibold !text-blue-700 dark:!text-blue-400 bg-blue-50/20 dark:bg-blue-900/5">
+                              <td 
+                                className="text-center font-semibold !text-blue-700 dark:!text-blue-400 bg-blue-50/20 dark:bg-blue-900/5"
+                                colSpan={l === "Jumlah APAR Powder" && isAPAR ? 2 : 1}
+                              >
                                 {valSeharusnyaStr}
                               </td>
-                              <td className={`text-center font-semibold ${
-                                isKurang 
-                                  ? "!text-red-700 dark:!text-red-400 bg-red-50/50 dark:bg-red-900/10" 
-                                  : "!text-emerald-700 dark:!text-emerald-400 bg-emerald-50/20 dark:bg-emerald-900/5"
-                              }`}>
+                              <td 
+                                className={`text-center font-semibold ${
+                                  isKurang 
+                                    ? "!text-red-700 dark:!text-red-400 bg-red-50/50 dark:bg-red-900/10" 
+                                    : "!text-emerald-700 dark:!text-emerald-400 bg-emerald-50/20 dark:bg-emerald-900/5"
+                                }`}
+                                colSpan={l === "Jumlah APAR Powder" && isAPAR ? 2 : 1}
+                              >
                                 {valTerlihat}
                               </td>
                             </React.Fragment>
@@ -412,7 +426,7 @@ export default function SubmissionTable({
                           }
                         }
                         
-                        if (isB3 && (q.label === "Penyimpanan B3" || q.label === "Ketersediaan SDS")) {
+                        if (isB3 && (q.label.includes("Penyimpanan B3") || q.label.includes("Ketersediaan SDS"))) {
                           const mRow = getMasterRow(sub.location);
                           let totalLemari = mRow ? (parseInt(mRow["Jumlah Lemari B3"], 10) || 0) : 0;
                           if (totalLemari === 0) {
@@ -434,21 +448,24 @@ export default function SubmissionTable({
                         }
                         
                         if (isAPD) {
-                          const mRow = getMasterRow(sub.location);
-                          const totalKaryawan = mRow ? (parseInt(mRow["Jumlah Karyawan"], 10) || 0) : 0;
-                          
-                          if (ans === "Ya") {
-                            return <td key={q.sheetHeader} className={`text-center font-bold text-emerald-600 dark:text-emerald-400 ${colColor}`}>{totalKaryawan}</td>;
-                          } else if (ans === "Tidak") {
-                            let nonCompliant = sub.tags ? sub.tags.filter((t: any) => !masterProfesiNames.includes(t.toLowerCase())).length : 0;
-                            if (nonCompliant === 0 && (!sub.tags || sub.tags.length === 0)) nonCompliant = 1; // fallback if tags are empty but they said Tidak
-                            let compliant = Math.max(0, totalKaryawan - nonCompliant);
+                          const isKepatuhan = q.label.includes("menggunakan APD") || q.label.includes("Kepatuhan");
+                          if (isKepatuhan) {
+                            const mRow = getMasterRow(sub.location);
+                            const totalKaryawan = mRow ? (parseInt(mRow["Jumlah Karyawan"], 10) || 0) : 0;
                             
-                            return (
-                              <td key={q.sheetHeader} className={`text-center font-bold ${colColor} ${compliant < totalKaryawan ? '!bg-red-50/80 dark:!bg-red-900/20 !text-red-600 dark:!text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
-                                {compliant}
-                              </td>
-                            );
+                            if (ans === "Ya") {
+                              return <td key={q.sheetHeader} className={`text-center font-bold text-emerald-600 dark:text-emerald-400 ${colColor}`}>{totalKaryawan}</td>;
+                            } else if (ans === "Tidak") {
+                              let nonCompliant = sub.tags ? sub.tags.filter((t: any) => !masterProfesiNames.includes(t.toLowerCase())).length : 0;
+                              if (nonCompliant === 0 && (!sub.tags || sub.tags.length === 0)) nonCompliant = 1; // fallback if tags are empty but they said Tidak
+                              let compliant = Math.max(0, totalKaryawan - nonCompliant);
+                              
+                              return (
+                                <td key={q.sheetHeader} className={`text-center font-bold ${colColor} ${compliant < totalKaryawan ? '!bg-red-50/80 dark:!bg-red-900/20 !text-red-600 dark:!text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                                  {compliant}
+                                </td>
+                              );
+                            }
                           }
                         }
                         
@@ -645,6 +662,214 @@ export default function SubmissionTable({
                 </tr>
               );
             })}
+
+            {/* ── Luar Gedung APAR Rows (amber) ─────────────────────────────── */}
+            {isAPAR && mergedSubmissions.length > 0 && (
+              <>
+                {/* Separator row */}
+                <tr className="bg-amber-100 dark:bg-amber-900/30 border-t-2 border-amber-300 dark:border-amber-700">
+                  <td colSpan={5} className="text-amber-800 dark:text-amber-300 text-right pr-4 text-xs font-bold uppercase tracking-widest py-2">
+                    🌳 APAR Luar Gedung — {mergedSubmissions.length} Lokasi
+                  </td>
+                  <td className="text-center font-bold text-[10px] text-blue-800 dark:text-blue-300 uppercase bg-blue-100/50 border-r border-blue-200/50">6kg (Seharusnya)</td>
+                  <td className="text-center font-bold text-[10px] text-blue-800 dark:text-blue-300 uppercase bg-blue-100/50">25kg (Seharusnya)</td>
+                  <td className="text-center font-bold text-[10px] text-emerald-800 dark:text-emerald-300 uppercase bg-emerald-100/50 border-r border-emerald-200/50">6kg (Terlihat)</td>
+                  <td className="text-center font-bold text-[10px] text-emerald-800 dark:text-emerald-300 uppercase bg-emerald-100/50">25kg (Terlihat)</td>
+                  <td colSpan={100} className="bg-transparent"></td>
+                </tr>
+
+                {mergedSubmissions.map((sub: any, idx: number) => {
+                  const mRow = getMasterRow(sub.location);
+                  // Luar Gedung APAR total from master (6kg + 25kg + CO2)
+                  let totalAparLuar = 0;
+                  if (mRow) {
+                    totalAparLuar = (parseInt(mRow["Jumlah APAR Powder 6 kg"], 10) || 0)
+                      + (parseInt(mRow["Jumlah APAR Powder 25 kg"], 10) || 0)
+                      + (parseInt(mRow["Jumlah APAR CO2"], 10) || 0);
+                  }
+                  if (totalAparLuar === 0) {
+                    const p6  = parseInt(sub.extras?.find((e: any) => e.label === "Jumlah APAR Powder")?.value || "0", 10) || 0;
+                    const p25 = parseInt(sub.extras?.find((e: any) => e.label === "Jumlah APAR Powder 25 kg")?.value || "0", 10) || 0;
+                    const co2 = parseInt(sub.extras?.find((e: any) => e.label === "Jumlah APAR CO2")?.value || "0", 10) || 0;
+                    totalAparLuar = p6 + p25 + co2;
+                  }
+
+                  // Per-row APAR compliance
+                  let aparPatuh = 0, aparTidak = 0;
+                  const qAnsRender: React.ReactNode[] = [];
+                  
+                  moduleDef.questions?.forEach((q: any, qIdx: number) => {
+                    const ans = sub.answers?.find((a: any) => a.label === q.label)?.jawaban;
+                    const colColor = Q_COLORS[qIdx % Q_COLORS.length];
+                    
+                    if (ans === "Ya") {
+                      aparPatuh += totalAparLuar;
+                      qAnsRender.push(
+                        <td key={q.sheetHeader} className={`text-center font-bold text-emerald-600 dark:text-emerald-400 ${colColor}`}>{totalAparLuar}</td>
+                      );
+                    }
+                    else if (ans === "Tidak") {
+                      let nonCompliant = totalAparLuar;
+                      const desc = sub.description || "";
+                      if (q.label.includes("Terjangkau")) {
+                        const match = desc.match(/TJ[:=]\s*(\d+)/i);
+                        if (match) nonCompliant = parseInt(match[1]);
+                      } else if (q.label.includes("Rambu")) {
+                        const match = desc.match(/RS[:=]\s*(\d+)/i);
+                        if (match) nonCompliant = parseInt(match[1]);
+                      } else if (q.label.includes("Kartu")) {
+                        const match = desc.match(/KP[:=]\s*(\d+)/i);
+                        if (match) nonCompliant = parseInt(match[1]);
+                      }
+                      const compliant = Math.max(0, totalAparLuar - nonCompliant);
+                      aparPatuh += compliant;
+                      aparTidak += nonCompliant;
+                      
+                      qAnsRender.push(
+                        <td key={q.sheetHeader} className={`text-center font-bold ${colColor} ${compliant < totalAparLuar ? '!bg-red-50/80 dark:!bg-red-900/20 !text-red-600 dark:!text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                          {compliant}
+                        </td>
+                      );
+                    } else {
+                      qAnsRender.push(
+                        <td key={q.sheetHeader} className={`text-center ${colColor}`}>
+                          <JawabanBadge jawaban={ans || ""} />
+                        </td>
+                      );
+                    }
+                  });
+                  const rowPct = (aparPatuh + aparTidak) === 0 ? "-"
+                    : Number(((aparPatuh / (aparPatuh + aparTidak)) * 100).toFixed(1)) + "%";
+
+                  return (
+                    <tr
+                      key={`luar-${idx}`}
+                      className="bg-amber-50/70 dark:bg-amber-900/20 hover:bg-amber-100/80 dark:hover:bg-amber-800/30 border-b border-amber-100 dark:border-amber-800/40"
+                    >
+                      <td className="text-center text-amber-600 dark:text-amber-400 font-medium">{sortedSubmissions.length + idx + 1}</td>
+                      <td className="text-gray-600 dark:text-gray-300 whitespace-nowrap">{formatTimestamp(sub.tanggalPemantauan || sub.timestamp) || "-"}</td>
+                      <td className="font-medium text-gray-800 dark:text-gray-100 whitespace-nowrap">{sub.namaPetugas || "-"}</td>
+                      <td className="text-amber-700 dark:text-amber-300 font-medium">
+                        <span className="inline-flex items-center gap-1">
+                          <span className="text-xs bg-amber-200 dark:bg-amber-800/60 text-amber-700 dark:text-amber-300 px-1.5 py-0.5 rounded font-bold">Luar</span>
+                          {sub.location || "-"}
+                        </span>
+                      </td>
+                      <td className="text-center text-gray-600 dark:text-gray-300">{sub.patroliKe || "-"}</td>
+
+                      {extrasBefore.map((l) => {
+                        if (l === "Jumlah APAR Powder") {
+                          const mRow = getMasterRow(sub.location);
+                          
+                          const valTerlihat6 = getExtraValue(sub, "Jumlah APAR Powder");
+                          const valSeharusnyaStr6 = mRow && mRow["Jumlah APAR Powder 6 kg"] !== undefined ? String(mRow["Jumlah APAR Powder 6 kg"]) : valTerlihat6;
+                          const numTerlihat6 = parseInt(valTerlihat6 as string, 10) || 0;
+                          const numSeharusnya6 = parseInt(valSeharusnyaStr6, 10) || 0;
+                          const isKurang6 = numTerlihat6 < numSeharusnya6;
+
+                          const valTerlihat25 = getExtraValue(sub, "Jumlah APAR Powder 25 kg");
+                          const valSeharusnyaStr25 = mRow && mRow["Jumlah APAR Powder 25 kg"] !== undefined ? String(mRow["Jumlah APAR Powder 25 kg"]) : valTerlihat25;
+                          const numTerlihat25 = parseInt(valTerlihat25 as string, 10) || 0;
+                          const numSeharusnya25 = parseInt(valSeharusnyaStr25, 10) || 0;
+                          const isKurang25 = numTerlihat25 < numSeharusnya25;
+
+                          return (
+                            <React.Fragment key={l}>
+                              <td className="text-center font-semibold !text-blue-700 dark:!text-blue-400 bg-blue-50/20 dark:bg-blue-900/5 border-r border-blue-200/50">
+                                {valSeharusnyaStr6}
+                              </td>
+                              <td className="text-center font-semibold !text-blue-700 dark:!text-blue-400 bg-blue-50/20 dark:bg-blue-900/5">
+                                {valSeharusnyaStr25}
+                              </td>
+                              <td className={`text-center font-semibold border-r border-emerald-200/50 ${
+                                isKurang6 ? "!text-red-700 dark:!text-red-400 bg-red-50/50 dark:bg-red-900/10" : "!text-emerald-700 dark:!text-emerald-400 bg-emerald-50/20 dark:bg-emerald-900/5"
+                              }`}>
+                                {valTerlihat6}
+                              </td>
+                              <td className={`text-center font-semibold ${
+                                isKurang25 ? "!text-red-700 dark:!text-red-400 bg-red-50/50 dark:bg-red-900/10" : "!text-emerald-700 dark:!text-emerald-400 bg-emerald-50/20 dark:bg-emerald-900/5"
+                              }`}>
+                                {valTerlihat25}
+                              </td>
+                            </React.Fragment>
+                          );
+                        }
+
+                        const valTerlihat = getExtraValue(sub, l);
+
+                        if (isMasterComparison) {
+                          const mRow = getMasterRow(sub.location);
+                          let valSeharusnyaStr = mRow && mRow[l] !== undefined && mRow[l] !== "" ? String(mRow[l]) : "-";
+                          
+                          const numTerlihat = parseInt(valTerlihat as string, 10) || 0;
+                          let numSeharusnya = parseInt(valSeharusnyaStr, 10) || 0;
+
+                          if (numSeharusnya === 0 || valSeharusnyaStr === "-") {
+                            valSeharusnyaStr = numTerlihat.toString();
+                            numSeharusnya = numTerlihat;
+                          }
+
+                          const isKurang = numTerlihat < numSeharusnya;
+
+                          return (
+                            <React.Fragment key={l}>
+                              <td className="text-center font-semibold !text-blue-700 dark:!text-blue-400 bg-blue-50/20 dark:bg-blue-900/5">
+                                {valSeharusnyaStr}
+                              </td>
+                              <td className={`text-center font-semibold ${
+                                isKurang 
+                                  ? "!text-red-700 dark:!text-red-400 bg-red-50/50 dark:bg-red-900/10" 
+                                  : "!text-emerald-700 dark:!text-emerald-400 bg-emerald-50/20 dark:bg-emerald-900/5"
+                              }`}>
+                                {valTerlihat}
+                              </td>
+                            </React.Fragment>
+                          );
+                        }
+                        return null;
+                      })}
+
+                      {/* Seharusnya Total */}
+                      <td className="text-center font-bold text-blue-700 dark:text-blue-400 bg-blue-50/20 dark:bg-blue-900/5">
+                        {totalAparLuar}
+                      </td>
+
+                      {/* Question answers */}
+                      {qAnsRender}
+
+                      {/* Per-row stats */}
+                      <td className="text-center font-bold text-green-700 dark:text-green-400 bg-green-50/30 dark:bg-green-900/10 border-l-2 border-green-200/50">
+                        {aparPatuh}
+                      </td>
+                      <td className="text-center font-bold text-red-700 dark:text-red-400 bg-red-50/30 dark:bg-red-900/10 border-l-2 border-red-200/50">
+                        {aparTidak}
+                      </td>
+                      <td className="text-center font-bold text-indigo-700 dark:text-indigo-400 bg-indigo-50/30 dark:bg-indigo-900/10 border-l-2 border-indigo-200/50">
+                        {rowPct}
+                      </td>
+
+                      {/* Tgl Pemeliharaan */}
+                      <td className="text-center text-gray-600 dark:text-gray-300 whitespace-nowrap">
+                        {sub.extras?.find((e: any) => e.label === "Tgl. Pemeliharaan Terakhir")?.value || "-"}
+                      </td>
+
+                      {/* Keterangan & Foto */}
+                      <td className="text-gray-600 dark:text-gray-300 min-w-[200px]">
+                        {sub.description || "-"}
+                      </td>
+                      <td className="text-gray-600 dark:text-gray-300 min-w-[120px]">
+                        {sub.photoUrl ? (
+                          <a href={sub.photoUrl} target="_blank" rel="noopener noreferrer"
+                            className="text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center gap-1 font-medium whitespace-nowrap">
+                            📷 Lihat Foto
+                          </a>
+                        ) : "-"}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </>
+            )}
           </tbody>
 
 
@@ -658,7 +883,7 @@ export default function SubmissionTable({
                   if (isMasterComparison) {
                     const sumSeharusnya = sortedSubmissions.reduce((acc, sub) => {
                       const mRow = getMasterRow(sub.location);
-                      const val = mRow && mRow[l] !== undefined ? mRow[l] : 0;
+                      let val = mRow && mRow[l] !== undefined ? mRow[l] : 0;
                       return acc + (parseInt(val as string, 10) || 0);
                     }, 0);
                     
@@ -668,8 +893,18 @@ export default function SubmissionTable({
                     
                     return (
                       <React.Fragment key={l}>
-                        <td className="text-center font-bold text-red-800 dark:text-red-400">{sumSeharusnya}</td>
-                        <td className="text-center font-bold text-red-800 dark:text-red-400">{sumTerlihat}</td>
+                        <td 
+                          className="text-center font-bold text-red-800 dark:text-red-400"
+                          colSpan={l === "Jumlah APAR Powder" && isAPAR ? 2 : 1}
+                        >
+                          {sumSeharusnya}
+                        </td>
+                        <td 
+                          className="text-center font-bold text-red-800 dark:text-red-400"
+                          colSpan={l === "Jumlah APAR Powder" && isAPAR ? 2 : 1}
+                        >
+                          {sumTerlihat}
+                        </td>
                       </React.Fragment>
                     );
                   } else {
@@ -682,7 +917,7 @@ export default function SubmissionTable({
                   }
                 })}
                 {(isAPAR || isLuarGedung) && (() => {
-                  const sumApar = sortedSubmissions.reduce((acc, sub) => {
+                  const sumDalamApar = sortedSubmissions.reduce((acc, sub) => {
                     const mRow = getMasterRow(sub.location);
                     let totalApar = 0;
                     if (mRow) {
@@ -710,6 +945,24 @@ export default function SubmissionTable({
                     }
                     return acc + totalApar;
                   }, 0);
+
+                  const sumLuarApar = (mergedSubmissions ?? []).reduce((acc, sub: any) => {
+                    const mRow = getMasterRow(sub.location);
+                    let totalApar = 0;
+                    if (mRow) {
+                      totalApar = (parseInt(mRow["Jumlah APAR Powder 6 kg"], 10) || 0)
+                        + (parseInt(mRow["Jumlah APAR Powder 25 kg"], 10) || 0)
+                        + (parseInt(mRow["Jumlah APAR CO2"], 10) || 0);
+                    } else {
+                      const p6 = parseInt(sub.extras?.find((e: any) => e.label === "Jumlah APAR Powder")?.value || "0", 10) || 0;
+                      const p25 = parseInt(sub.extras?.find((e: any) => e.label === "Jumlah APAR Powder 25 kg")?.value || "0", 10) || 0;
+                      const co2 = parseInt(sub.extras?.find((e: any) => e.label === "Jumlah APAR CO2")?.value || "0", 10) || 0;
+                      totalApar = p6 + p25 + co2;
+                    }
+                    return acc + totalApar;
+                  }, 0);
+
+                  const sumApar = sumDalamApar + sumLuarApar;
                   return <td className="text-center font-bold text-blue-700 dark:text-blue-400 bg-blue-50/20 dark:bg-blue-900/5">{sumApar}</td>;
                 })()}
                 {isAPD && (() => {

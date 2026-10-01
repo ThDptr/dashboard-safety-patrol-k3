@@ -941,6 +941,20 @@ export async function GET(request: Request) {
                 }
               }
            }
+
+           for (const sub of aggregate.mergedSubmissions ?? []) {
+              const mRow = masterData.find((m: any) => m.Ruangan?.trim().toLowerCase() === (sub.location || "").trim().toLowerCase());
+              if (mRow) {
+                sumTotalSeharusnya += (parseInt(mRow["Jumlah APAR Powder 6 kg"]) || 0) + (parseInt(mRow["Jumlah APAR Powder 25 kg"]) || 0) + (parseInt(mRow["Jumlah APAR CO2"]) || 0);
+              } else {
+                const getE = (l: string) => {
+                  const e = sub.extras?.find((x: any) => x.label === l || x.label.includes(l));
+                  return parseInt(e?.value || "0", 10) || 0;
+                };
+                sumTotalSeharusnya += getE("Jumlah APAR Powder") + getE("Jumlah APAR Powder 25 kg") + getE("Jumlah APAR CO2");
+              }
+           }
+
            summaryRow.getCell(qColIdx).value = sumTotalSeharusnya;
            summaryRow.getCell(qColIdx).font = { bold: true };
            summaryRow.getCell(qColIdx).alignment = { horizontal: "center", vertical: "middle" };

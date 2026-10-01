@@ -98,6 +98,7 @@ interface ModuleData {
   questionResults: QuestionResult[];
   submissions: Submission[];
   submissionCount: number;
+  mergedSubmissions?: (Submission & { isLuarGedung?: boolean })[];
 }
 
 // ─── Sub-components ──────────────────────────────────────────────────────────
@@ -732,7 +733,7 @@ function PatroliDetailContent() {
             }
           } else {
             // Tab a & b — existing logic
-            const answerObj1 = p.answers.find((a: any) => a.label.includes(h1.split(" ")[0]));
+            const answerObj1 = p.answers.find((a: any) => a.label.includes(h1));
             if (answerObj1) {
               const ans = answerObj1.jawaban;
               if (ans !== "-" && ans !== "N/A" && ans !== "") {
@@ -749,7 +750,7 @@ function PatroliDetailContent() {
               }
             }
 
-            const answerObj2 = p.answers.find((a: any) => a.label.includes(h2.split(" ")[0]));
+            const answerObj2 = p.answers.find((a: any) => a.label.includes(h2));
             if (answerObj2) {
               const ans = answerObj2.jawaban;
               if (ans !== "-" && ans !== "N/A" && ans !== "") {
@@ -2298,6 +2299,7 @@ function PatroliDetailContent() {
                     questionResults={data.questionResults}
                     totalPct={data.totalPct}
                     masterData={masterData}
+                    mergedSubmissions={data.mergedSubmissions}
                   />
                   {!moduleDef.logOnly && (
                     <div className="mt-4 text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-slate-800/50 p-3 rounded-lg border border-gray-100 dark:border-gray-800">

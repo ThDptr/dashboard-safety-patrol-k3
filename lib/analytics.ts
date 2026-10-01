@@ -75,6 +75,11 @@ export interface ModuleAggregateResult {
   totalPct: number | null;
   /** All individual submission rows */
   submissions: SubmissionResult[];
+  /**
+   * Submissions from the merged module (e.g. Luar Gedung for APAR).
+   * These are shown in the table with a different color.
+   */
+  mergedSubmissions?: SubmissionResult[];
   /** Trend vs previous month (positive = better, negative = worse) */
   trend?: number | null;
 }
@@ -227,6 +232,29 @@ export function computeModuleAggregate(
   // Filter rows relevant to this module
   const relevantRows = rows.filter((r) => rowMatchesModule(r, module));
 
+  // If this module merges data from another module (e.g. APAR merges Luar Gedung),
+  // collect those rows separately for aggregation
+  const LUAR_GEDUNG_SCOPE_JENIS = "Luar Gedung";
+  const mergedRows: PatroliRow[] = module.mergedWithSlug
+    ? rows.filter((r) => r.jenisPemantauan.trim() === LUAR_GEDUNG_SCOPE_JENIS)
+    : [];
+
+  // Build a lookup from this module's question label → merged module's sheetHeader
+  // Uses MODULE_BY_SLUG from modules.ts (imported lazily to avoid circular deps)
+  let mergedQuestionHeaderMap: Record<string, string> = {};
+  if (module.mergedWithSlug && module.mergedQuestionMap) {
+    // Inline the LUAR_GEDUNG sheetHeaders (avoids circular import)
+    const LUAR_APAR_HEADERS: Record<string, string> = {
+      "APAR Luar - Terjangkau": "Luar Gedung : APAR [APAR Luar - Terjangkau]",
+      "APAR Luar - Rambu dan SOP": "Luar Gedung : APAR [APAR Luar - Rambu dan SOP Terpasang]",
+      "APAR Luar - Kartu pemeliharaan terisi": "Luar Gedung : APAR [APAR Luar - Kartu pemeliharaan terisi]",
+    };
+    for (const [thisLabel, mergedLabel] of Object.entries(module.mergedQuestionMap)) {
+      const mergedSheetHeader = LUAR_APAR_HEADERS[mergedLabel];
+      if (mergedSheetHeader) mergedQuestionHeaderMap[thisLabel] = mergedSheetHeader;
+    }
+  }
+
   // Sort ascending by date to accurately recalculate Patroli Ke-
   relevantRows.sort((a, b) => {
     const da = new Date(a.tanggalPemantauan || a.timestamp).getTime();
@@ -250,116 +278,108 @@ export function computeModuleAggregate(
     let na = 0;
     let empty = 0;
 
+    // ── Helper: process a single APAR-type row ────────────────────────────────
+    const processAparRow = (row: PatroliRow, ans: string, isLuar: boolean) => {
+      const locKey = getDisplayLocation(row).trim().toLowerCase();
+      const mRow = masterDataMap.get(locKey);
+      let totalApar = 0;
+      if (mRow) {
+        if (!isLuar) {
+          totalApar = (parseInt(mRow["Jumlah APAR Powder"]) || 0) + (parseInt(mRow["Jumlah APAR CO2"]) || 0);
+        } else {
+          totalApar = (parseInt(mRow["Jumlah APAR Powder 6 kg"]) || 0)
+                    + (parseInt(mRow["Jumlah APAR Powder 25 kg"]) || 0)
+                    + (parseInt(mRow["Jumlah APAR CO2"]) || 0);
+        }
+      }
+      // Fallback to form-input counts if Master Data is 0
+      if (totalApar === 0) {
+        if (!isLuar) {
+          const pw = module.extraFields?.find(e => e.label === "Jumlah APAR Powder");
+          const co = module.extraFields?.find(e => e.label === "Jumlah APAR CO2");
+          totalApar = (parseInt(getField(row, pw?.sheetHeader || "") || "0", 10) || 0)
+                    + (parseInt(getField(row, co?.sheetHeader || "") || "0", 10) || 0);
+        } else {
+          const p6  = parseInt(getField(row, "APAR Luar -  Jumlah APAR Powder 6 kg")  || "0", 10) || 0;
+          const p25 = parseInt(getField(row, "APAR Luar -  Jumlah APAR Powder 25 kg") || "0", 10) || 0;
+          const co2 = parseInt(getField(row, "APAR Luar -  Jumlah APAR CO2")          || "0", 10) || 0;
+          totalApar = p6 + p25 + co2;
+        }
+      }
+      const descHeader = isLuar ? "Deskripsi Temuan - APAR Luar" : (module.descriptionHeader || "");
+      if (ans === "N/A") {
+        na += totalApar;
+      } else if (ans === "") {
+        empty += totalApar;
+      } else if (ans === "Ya") {
+        ya += totalApar;
+      } else if (ans === "Tidak") {
+        let nonCompliantCount = totalApar;
+        const desc = getField(row, descHeader);
+        if (q.label.includes("Terjangkau")) {
+          const m = desc?.match(/TJ\s*[:=]\s*(\d+)/i);
+          if (m) nonCompliantCount = parseInt(m[1]);
+        } else if (q.label.includes("Rambu")) {
+          const m = desc?.match(/RS\s*[:=]\s*(\d+)/i);
+          if (m) nonCompliantCount = parseInt(m[1]);
+        } else if (q.label.includes("Kartu")) {
+          const m = desc?.match(/KP\s*[:=]\s*(\d+)/i);
+          if (m) nonCompliantCount = parseInt(m[1]);
+        }
+        const compliantCount = Math.max(0, totalApar - nonCompliantCount);
+        ya += compliantCount;
+        tidak += (totalApar - compliantCount);
+      }
+    };
+
     for (const row of relevantRows) {
       const ans = getAnswer(row, q.sheetHeader);
-      
+
       if (module.slug === "apar" || module.slug === "luar-gedung") {
-        // Master Data tells us "Total APAR Seharusnya" for this location
-        // PENTING: gunakan getDisplayLocation(row) bukan row.ruangan karena
-        // Luar Gedung menggunakan field "Lokasi" (kolom CW), bukan "Ruangan"
-        const locKey = getDisplayLocation(row).trim().toLowerCase();
-        const mRow = masterDataMap.get(locKey);
-        let totalApar = 0;
-        if (mRow) {
-          if (module.slug === "apar") {
-            const totalAparPowder = parseInt(mRow["Jumlah APAR Powder"]) || 0;
-            const totalAparCo2 = parseInt(mRow["Jumlah APAR CO2"]) || 0;
-            totalApar = totalAparPowder + totalAparCo2;
-          } else {
-            const totalAparPowder6 = parseInt(mRow["Jumlah APAR Powder 6 kg"]) || 0;
-            const totalAparPowder25 = parseInt(mRow["Jumlah APAR Powder 25 kg"]) || 0;
-            const totalAparCo2 = parseInt(mRow["Jumlah APAR CO2"]) || 0;
-            totalApar = totalAparPowder6 + totalAparPowder25 + totalAparCo2;
-          }
-        }
-        
-        // Fallback to Terlihat (form input) if Master Data is missing OR if the counts are 0 in Master Data
-        if (totalApar === 0) {
-          const getE = (l: string) => {
-            const ext = module.extraFields?.find(ext => ext.label === l);
-            if (!ext) return 0;
-            const val = getField(row, ext.sheetHeader);
-            return parseInt(val || "0", 10) || 0;
-          };
-          
-          if (module.slug === "apar") {
-            totalApar = getE("Jumlah APAR Powder") + getE("Jumlah APAR CO2");
-          } else if (module.slug === "luar-gedung") {
-            totalApar = getE("Jumlah APAR Powder 6 kg") + getE("Jumlah APAR Powder 25 kg") + getE("Jumlah APAR CO2");
-          }
-        }
-        
-        // Exclude N/A or empty
-        if (ans === "N/A") {
-          na += totalApar;
-        } else if (ans === "") {
-          empty += totalApar;
-        } else if (ans === "Ya") {
-          ya += totalApar; // all APARs are compliant
-        } else if (ans === "Tidak") {
-          let nonCompliantCount = totalApar;
-          const desc = module.descriptionHeader ? getField(row, module.descriptionHeader) : "";
-          
-          if (q.label.includes("Terjangkau")) {
-            const match = desc.match(/TJ\s*[:=]\s*(\d+)/i);
-            if (match) nonCompliantCount = parseInt(match[1]);
-          } else if (q.label.includes("Rambu")) {
-            const match = desc.match(/RS\s*[:=]\s*(\d+)/i);
-            if (match) nonCompliantCount = parseInt(match[1]);
-          } else if (q.label.includes("Kartu")) {
-            const match = desc.match(/KP\s*[:=]\s*(\d+)/i);
-            if (match) nonCompliantCount = parseInt(match[1]);
-          }
-          
-          const compliantCount = Math.max(0, totalApar - nonCompliantCount);
-          ya += compliantCount;
-          tidak += (totalApar - compliantCount);
-        }
+        processAparRow(row, ans, module.slug === "luar-gedung");
       } else if (module.slug === "apd") {
         const mRow = masterDataMap.get(String(row.ruangan).trim().toLowerCase());
         const totalKaryawan = mRow ? (parseInt(mRow["Jumlah Karyawan"]) || 0) : 0;
-        
+        const isKepatuhan = q.label.includes("menggunakan APD") || q.label.includes("Kepatuhan");
+        const expectedCount = isKepatuhan ? totalKaryawan : 1;
         if (ans === "N/A") {
-          na += totalKaryawan;
+          na += expectedCount;
         } else if (ans === "") {
-          empty += totalKaryawan;
+          empty += expectedCount;
         } else if (ans === "Ya") {
-          ya += totalKaryawan;
+          ya += expectedCount;
         } else if (ans === "Tidak") {
           let nonCompliantCount = 0;
           let profViolations = 0;
-          
-          for (const key of Object.keys(row.raw)) {
-            if (key.includes("APD - Unit/Profesi yang tidak patuh")) {
-              const val = row.raw[key];
-              if (val && typeof val === "string" && val.trim() !== "") {
-                const match = key.match(/\[(\d+|lebih)\]/i);
-                if (match) {
-                  const numStr = match[1].toLowerCase();
-                  let count = numStr === "lebih" ? 5 : parseInt(numStr, 10);
-                  if (isNaN(count)) count = 1;
-                  
-                  const professions = val.split(",").map((t) => t.trim()).filter(Boolean);
-                  
-                  for (const p of professions) {
-                     nonCompliantCount += count;
-                     if (masterProfesi.includes(p.toLowerCase())) {
-                         profViolations += count;
-                     }
+          if (isKepatuhan) {
+            for (const key of Object.keys(row.raw)) {
+              if (key.includes("APD - Unit/Profesi yang tidak patuh")) {
+                const val = row.raw[key];
+                if (val && typeof val === "string" && val.trim() !== "") {
+                  const match = key.match(/\[(\d+|lebih)\]/i);
+                  if (match) {
+                    const numStr = match[1].toLowerCase();
+                    let count = numStr === "lebih" ? 5 : parseInt(numStr, 10);
+                    if (isNaN(count)) count = 1;
+                    const professions = val.split(",").map((t) => t.trim()).filter(Boolean);
+                    for (const p of professions) {
+                       nonCompliantCount += count;
+                       if (masterProfesi.includes(p.toLowerCase())) profViolations += count;
+                    }
                   }
                 }
               }
             }
+            nonCompliantCount = Math.max(0, nonCompliantCount - profViolations);
+            if (nonCompliantCount === 0 && profViolations === 0) nonCompliantCount = 1;
+          } else {
+            nonCompliantCount = 1;
           }
-          
-          nonCompliantCount = Math.max(0, nonCompliantCount - profViolations);
-          if (nonCompliantCount === 0 && profViolations === 0) nonCompliantCount = 1; // Only assume 1 violation if no prof info, as requested
-          
-          const compliantCount = Math.max(0, totalKaryawan - nonCompliantCount);
+          const compliantCount = Math.max(0, expectedCount - nonCompliantCount);
           ya += compliantCount;
           tidak += nonCompliantCount;
         }
-      } else if (module.slug === "b3" && (q.label === "Penyimpanan B3" || q.label === "Ketersediaan SDS")) {
+      } else if (module.slug === "b3" && (q.label.includes("Penyimpanan B3") || q.label.includes("Ketersediaan SDS"))) {
         let expectedCount = 1;
         const mRow = masterDataMap.get(String(row.ruangan).trim().toLowerCase());
         expectedCount = mRow ? (parseInt(mRow["Jumlah Lemari B3"]) || 0) : 0;
@@ -367,13 +387,12 @@ export function computeModuleAggregate(
           const extHeader = module.extraFields?.find(ext => ext.label === "Jumlah Lemari B3")?.sheetHeader || "";
           expectedCount = parseInt(getField(row, extHeader) || "0", 10) || 0;
         }
-
         if (ans === "N/A") {
           na += expectedCount;
         } else if (ans === "") {
           empty += expectedCount;
         } else if (ans === "Ya") {
-          ya += expectedCount; 
+          ya += expectedCount;
         } else if (ans === "Tidak") {
           let nonCompliantCount = expectedCount;
           if (module.badgeHeader) {
@@ -383,13 +402,11 @@ export function computeModuleAggregate(
               nonCompliantCount = tags.length > 0 ? tags.length : expectedCount;
             }
           }
-          
           const compliantCount = Math.max(0, expectedCount - nonCompliantCount);
           ya += compliantCount;
           tidak += (expectedCount - compliantCount);
         }
       } else if (module.slug === "b3" && (q.label === "Eyewasher berfungsi baik" || q.label === "Bodywasher berfungsi baik")) {
-        // Numeric answer support: rawVal could be a number (unit berfungsi) or Ya/Tidak (backward compat)
         const rawVal = getField(row, q.sheetHeader);
         const jumlahLabel = q.label === "Eyewasher berfungsi baik" ? "Jumlah Eyewasher" : "Jumlah Bodywasher";
         const jumlahExt = module.extraFields?.find(ef => ef.label === jumlahLabel);
@@ -408,23 +425,27 @@ export function computeModuleAggregate(
           ya++;
         } else if (ans === "Setengah") {
           setengah++;
-          // For sarana-proteksi, Setengah does NOT contribute to "Ya", but it contributes to "Tidak"
           if (module.slug === "sarana-proteksi") {
-            tidak++; // "Kurang Baik" is counted as "Tidak Patuh"
+            tidak++;
           } else {
             ya += 0.5;
             tidak += 0.5;
           }
-        }
-        else if (ans === "Tidak") {
+        } else if (ans === "Tidak") {
           tidak++;
-        }
-        // TidakAda (khusus Hydrant "Tidak ada hydrant") — masuk denominator sebagai tidak
-        else if (ans === "TidakAda") {
-          tidak++; // masuk denominator
-        }
-        else if (ans === "N/A") na++;
+        } else if (ans === "TidakAda") {
+          tidak++;
+        } else if (ans === "N/A") na++;
         else empty++;
+      }
+    }
+
+    // ── Process merged rows: Luar Gedung APAR merged into APAR Dalam ─────────
+    if (module.slug === "apar" && mergedRows.length > 0 && mergedQuestionHeaderMap[q.label]) {
+      const mergedSheetHeader = mergedQuestionHeaderMap[q.label];
+      for (const mrow of mergedRows) {
+        const mans = getAnswer(mrow, mergedSheetHeader);
+        processAparRow(mrow, mans, true);
       }
     }
 
@@ -641,13 +662,69 @@ export function computeModuleAggregate(
     return (a.row.patroliKe || 0) - (b.row.patroliKe || 0);
   });
 
+  // Build mergedSubmissions from Luar Gedung rows (for display in APAR table)
+  const LUAR_QUESTION_HEADERS: Record<string, string> = {
+    "APAR - Terjangkau":                "Luar Gedung : APAR [APAR Luar - Terjangkau]",
+    "APAR - Rambu dan SOP terpasang":   "Luar Gedung : APAR [APAR Luar - Rambu dan SOP Terpasang]",
+    "APAR - Kartu pemeliharaan terisi": "Luar Gedung : APAR [APAR Luar - Kartu pemeliharaan terisi]",
+  };
+  const LUAR_EXTRA_MAP: Record<string, string> = {
+    "Jumlah APAR Powder":         "APAR Luar -  Jumlah APAR Powder 6 kg",
+    "Jumlah APAR CO2":            "APAR Luar -  Jumlah APAR CO2",
+    "Tgl. Pemeliharaan Terakhir": "APAR Luar - Tanggal pemeliharaan terakhir",
+  };
+
+  const mergedSubList: SubmissionResult[] = mergedRows.map((row) => {
+    const answers = module.questions.map((q) => ({
+      question: q,
+      jawaban: getAnswer(row, LUAR_QUESTION_HEADERS[q.label] || q.sheetHeader) as any,
+    }));
+
+    const photoUrl = getField(row, "Foto Temuan - APAR Luar");
+    const description = getField(row, "Deskripsi Temuan - APAR Luar");
+
+    // Map APAR extras to Luar Gedung headers
+    const extras = (module.extraFields ?? []).map((ef) => {
+      const luarHeader = LUAR_EXTRA_MAP[ef.label];
+      const raw = luarHeader ? getField(row, luarHeader) : "";
+      return { label: ef.label, value: raw, raw };
+    });
+    // Also inject Powder 25kg as bonus extra
+    const powder25 = getField(row, "APAR Luar -  Jumlah APAR Powder 25 kg");
+    if (powder25) {
+      extras.splice(1, 0, { label: "Jumlah APAR Powder 25 kg", value: powder25, raw: powder25 });
+    }
+
+    return {
+      row,
+      location: getDisplayLocation(row),
+      answers,
+      description,
+      photoUrl,
+      tags: [],
+      extras,
+      secondaryDescription: "",
+      secondaryPhotoUrl: "",
+    };
+  });
+
+  mergedSubList.sort((a, b) => {
+    const locA = a.location.toLowerCase();
+    const locB = b.location.toLowerCase();
+    if (locA < locB) return -1;
+    if (locA > locB) return 1;
+    return (a.row.patroliKe || 0) - (b.row.patroliKe || 0);
+  });
+
   return {
     module,
     questionResults,
     totalPct,
     submissions,
+    mergedSubmissions: mergedSubList.length > 0 ? mergedSubList : undefined,
   };
 }
+
 
 // ─── Summary for Homepage Cards ───────────────────────────────────────────────
 
