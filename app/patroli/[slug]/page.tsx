@@ -336,8 +336,12 @@ function PatroliDetailContent() {
       parts.push(desc.trim());
     }
 
-    // 2. APD profession violations from tags
-    if (p?.tags && Array.isArray(p.tags) && p.tags.length > 0) {
+    // 2. Only append issue tags for the main description.
+    //    For B3 secondary / Eyewasher-Bodywasher description, tags are already
+    //    contextualized as room/unit problems for the primary B3 table and should
+    //    not be repeated in the C table.
+    const includeTags = !useSecondary;
+    if (includeTags && p?.tags && Array.isArray(p.tags) && p.tags.length > 0) {
       // Only include tags that are profession names (in allowedTags)
       const profTags = allowedTags.length > 0
         ? p.tags.filter((t: string) => allowedTags.includes(t.toLowerCase()))
