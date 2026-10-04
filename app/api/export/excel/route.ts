@@ -21,6 +21,7 @@ export const dynamic = 'force-dynamic';
 import { MODULES, MODULE_BY_SLUG, HARIAN_ABBREV } from "@/lib/modules";
 import { computeModuleAggregate } from "@/lib/analytics";
 import { getCurrentBulan, formatBulan, formatTanggal, formatTanggalPendek, formatMaybeDate } from "@/lib/utils";
+import { addAparSheet } from "@/lib/export-apar";
 
 const HEADER_FILL: ExcelJS.Fill = {
   type: "pattern",
@@ -38,29 +39,86 @@ const ALT_FILL: ExcelJS.Fill = {
   fgColor: { argb: "FFFFF5F5" },
 };
 
-function applyHeaderRow(row: ExcelJS.Row): void {
+const MODULE_THEME: Record<string, { header: ExcelJS.Fill; soft: ExcelJS.Fill; accent: string }> = {
+  default: { header: HEADER_FILL, soft: ALT_FILL, accent: "FFB71C1C" },
+  apar: { header: { type: "pattern", pattern: "solid", fgColor: { argb: "FFB45300" } }, soft: { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFF3E0" } }, accent: "FFB45300" },
+  b3: { header: { type: "pattern", pattern: "solid", fgColor: { argb: "FF14532D" } }, soft: { type: "pattern", pattern: "solid", fgColor: { argb: "FFE7F7E9" } }, accent: "FF14532D" },
+  luar: { header: { type: "pattern", pattern: "solid", fgColor: { argb: "FF7C4A00" } }, soft: { type: "pattern", pattern: "solid", fgColor: { argb: "FFF7E7B5" } }, accent: "FF7C4A00" },
+};
+
+function applyHeaderRow(row: ExcelJS.Row, fill: ExcelJS.Fill = HEADER_FILL): void {
   row.eachCell((cell) => {
-    cell.fill = HEADER_FILL;
+    cell.fill = fill;
     cell.font = HEADER_FONT;
     cell.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
     cell.border = {
+      left: { style: "thin", color: { argb: "FFB0B0B0" } },
+      right: { style: "thin", color: { argb: "FFB0B0B0" } },
+      top: { style: "thin", color: { argb: "FFB0B0B0" } },
       bottom: { style: "thin", color: { argb: "FF999999" } },
     };
   });
   row.height = 28;
 }
 
-function applyDataRow(row: ExcelJS.Row, idx: number): void {
+function applyDataRow(row: ExcelJS.Row, idx: number, altFill: ExcelJS.Fill = ALT_FILL): void {
   if (idx % 2 === 0) {
     row.eachCell((cell) => {
-      cell.fill = ALT_FILL;
+      cell.fill = altFill;
     });
   }
   row.eachCell((cell) => {
     cell.alignment = { vertical: "top", wrapText: true };
     cell.font = { size: 9 };
+    cell.border = {
+      left: { style: "thin", color: { argb: "FFE5E7EB" } },
+      right: { style: "thin", color: { argb: "FFE5E7EB" } },
+      top: { style: "thin", color: { argb: "FFF3F4F6" } },
+      bottom: { style: "thin", color: { argb: "FFE5E7EB" } },
+    };
   });
-  row.height = 40; // taller to accommodate wrapped text
+  row.height = 40;
+}
+
+function applyTitleRow(row: ExcelJS.Row, title: string, accent: string): void {
+  const titleCell = row.getCell(1);
+  titleCell.value = title;
+  titleCell.font = { bold: true, size: 12, color: { argb: accent } };
+  titleCell.alignment = { horizontal: "center", vertical: "middle" };
+  titleCell.border = {
+    left: { style: "thin", color: { argb: accent } },
+    right: { style: "thin", color: { argb: accent } },
+    top: { style: "thin", color: { argb: accent } },
+    bottom: { style: "thin", color: { argb: accent } },
+  };
+  row.height = 24;
+}
+
+function applySectionBannerRow(row: ExcelJS.Row, text: string, fill: ExcelJS.Fill, accent: string): void {
+  row.eachCell((cell, colNum) => {
+    if (colNum === 1) {
+      cell.value = text;
+      cell.font = { bold: true, color: { argb: accent }, italic: true, size: 11 };
+      cell.fill = fill;
+      cell.alignment = { horizontal: "left", vertical: "middle" };
+      cell.border = {
+        left: { style: "thin", color: { argb: accent } },
+        right: { style: "thin", color: { argb: accent } },
+        top: { style: "thin", color: { argb: accent } },
+        bottom: { style: "thin", color: { argb: accent } },
+      };
+      return;
+    }
+    cell.value = "";
+    cell.fill = fill;
+    cell.border = {
+      left: { style: "thin", color: { argb: accent } },
+      right: { style: "thin", color: { argb: accent } },
+      top: { style: "thin", color: { argb: accent } },
+      bottom: { style: "thin", color: { argb: accent } },
+    };
+  });
+  row.height = 22;
 }
 
 function jawabanDisplay(val: string, moduleSlug?: string): string {
@@ -91,7 +149,14 @@ function buildKeteranganForExport(
   const desc = (sub.description || "").trim();
   if (desc && desc !== "-") parts.push(desc);
 
-  // 2. APD profession violations from tags
+  // 2. B3: secondary description (Eyewasher/Bodywasher) is displayed separately in dashboard,
+  //    so export should include it in the same keterangan cell to preserve context without duplicating tags.
+  if (isB3) {
+    const sec = (sub.secondaryDescription || "").trim();
+    if (sec && sec !== "-" && sec !== desc) parts.push(sec);
+  }
+
+  // 3. APD profession violations from tags
   if (isAPD && sub.tags && sub.tags.length > 0) {
     const profTags = masterProfesiNames.length > 0
       ? sub.tags.filter((t: string) => masterProfesiNames.includes(t.toLowerCase()))
@@ -104,8 +169,9 @@ function buildKeteranganForExport(
     }
   }
 
-  // 3. B3 sub-unit bermasalah from tags
-  if (isB3 && sub.tags && sub.tags.length > 0) {
+  // 4. B3 sub-unit bermasalah from tags
+  //    This tag is intentionally kept only for the main B3 description, not the secondary Eyewasher/Bodywasher context.
+  if (isB3 && sub.tags && sub.tags.length > 0 && !(sub.secondaryDescription && sub.secondaryDescription.trim() !== "")) {
     parts.push(`[Sub-unit bermasalah: ${sub.tags.join(", ")}]`);
   }
 
@@ -123,13 +189,24 @@ export async function GET(request: Request) {
     const locationsParam = searchParams.get("locations") ?? "";
     const topicName = searchParams.get("topicName") ?? "";
 
-    const [allRows, masterData] = await Promise.all([
+    // APAR: dashboard memakai master Ruangan + Luar Gedung (per bulan) dan,
+    // bila rentang tanggal dipilih, rentang itu MENGGANTIKAN filter bulan.
+    const needsAparMaster = !slug || slug === "apar";
+    const useDateRangeOnly = slug === "apar" && Boolean(startDate && endDate);
+
+    const [allRows, masterData, aparMasterRuangan, aparMasterLuar] = await Promise.all([
       fetchPatrolData(),
       fetchMasterData("ruangan").catch(() => []), // Silently fallback to empty array if fails
+      needsAparMaster ? fetchMasterData("ruangan", bulan).catch(() => []) : Promise.resolve([]),
+      needsAparMaster ? fetchMasterData("luar", bulan).catch(() => []) : Promise.resolve([]),
     ]);
-    let rows = filterByBulan(allRows, bulan);
+    const aparMasterData = [...aparMasterRuangan, ...aparMasterLuar];
+
+    let rows = useDateRangeOnly
+      ? filterByDateRange(allRows, startDate, endDate)
+      : filterByBulan(allRows, bulan);
     if (ruangan) rows = filterByRuangan(rows, ruangan);
-    if (startDate || endDate) rows = filterByDateRange(rows, startDate, endDate);
+    if (!useDateRangeOnly && (startDate || endDate)) rows = filterByDateRange(rows, startDate, endDate);
     if (locationsParam) {
       const allowedLocs = locationsParam.split(",");
       rows = rows.filter((r) => allowedLocs.includes(getDisplayLocation(r)));
@@ -153,7 +230,7 @@ export async function GET(request: Request) {
       const summaryData = [];
       for (const mod of MODULES) {
         if (mod.logOnly && mod.slug !== "sosialisasi") continue;
-        const aggregate = computeModuleAggregate(mod, rows, masterData);
+        const aggregate = computeModuleAggregate(mod, rows, mod.slug === "apar" ? aparMasterData : masterData);
         
         let detailRumus = "-";
         if (!mod.logOnly) {
@@ -305,6 +382,13 @@ export async function GET(request: Request) {
     for (const mod of modulesToExport) {
       if (mod.logOnly && mod.slug !== "sosialisasi") continue; // Export sosialisasi as well now
 
+      // APAR memakai builder khusus agar identik dengan tabel dashboard
+      if (mod.slug === "apar") {
+        const aparAggregate = computeModuleAggregate(mod, rows, aparMasterData);
+        await addAparSheet(workbook, { mod, aggregate: aparAggregate, masterData: aparMasterData, bulan });
+        continue;
+      }
+
       const sheetName = mod.title.replace(/[*?:\/\[\]\\]/g, '-').slice(0, 31); // Excel limit and valid chars
       const sheet = workbook.addWorksheet(sheetName, {
         pageSetup: { orientation: "landscape", fitToPage: true, fitToWidth: 1 },
@@ -317,6 +401,13 @@ export async function GET(request: Request) {
       const isSosialisasi = mod.slug === "sosialisasi";
       const isAPD = mod.slug === "apd";
       const isAPAR = mod.slug === "apar";
+      const moduleTheme = mod.slug === "apar"
+        ? MODULE_THEME.apar
+        : mod.slug === "b3"
+          ? MODULE_THEME.b3
+          : isLuarGedung
+            ? MODULE_THEME.luar
+            : MODULE_THEME.default;
 
       const HARIAN_SLUGS = ["evakuasi", "kebersihan", "risiko", "sampah", "code-red"];
       const isHarian = HARIAN_SLUGS.includes(mod.slug);
@@ -571,6 +662,8 @@ export async function GET(request: Request) {
       if (mod.slug === "apar" || isLuarGedung) extrasAfter = ["Tgl. Pemeliharaan Terakhir"];
       if (isB3) extrasAfter = ["Jumlah Eyewasher", "Jumlah Bodywasher"];
 
+      const hasMergedAparSection = mod.slug === "apar" && (aggregate.mergedSubmissions ?? []).length > 0;
+
       let headers = [
         "No",
         "Tanggal",
@@ -581,22 +674,39 @@ export async function GET(request: Request) {
 
       if (isSosialisasi) {
         headers.push("Topik Sosialisasi", "Sasaran", "Keterangan / Temuan", "Foto URL");
+      } else if (hasMergedAparSection) {
+        headers.push(
+          "Seharusnya | Jumlah APAR Powder 6 kg",
+          "Seharusnya | Jumlah APAR Powder 25 kg",
+          "Terlihat | Jumlah APAR Powder 6 kg",
+          "Terlihat | Jumlah APAR Powder 25 kg",
+          "Seharusnya | Jumlah APAR CO2",
+          "Terlihat | Jumlah APAR CO2",
+          "Total APAR | Seharusnya",
+          ...mod.questions.map((q) => q.label),
+          "Patuh | Per Baris",
+          "Tdk Patuh | Per Baris",
+          "Total % | Per Baris",
+          ...extrasAfter,
+          "Keterangan / Temuan",
+          "Foto URL",
+        );
       } else {
         for (const l of extrasBefore) {
           if (isAPAR || isLuarGedung) {
-            headers.push(`${l} (Seharusnya)`);
-            headers.push(`${l} (Terlihat)`);
+            headers.push(`Seharusnya | ${l}`);
+            headers.push(`Terlihat | ${l}`);
           } else {
             headers.push(l);
           }
         }
         
-        if (isAPAR || isLuarGedung) headers.push("Total APAR (Seharusnya)");
-        if (isAPD) headers.push("Total Karyawan (Seharusnya)");
+        if (isAPAR || isLuarGedung) headers.push("Total APAR | Seharusnya");
+        if (isAPD) headers.push("Total Karyawan | Seharusnya");
 
         headers.push(...mod.questions.map((q) => q.label));
         
-        if (isAPD) headers.push("Total % (Per Baris)");
+        if (isAPD) headers.push("Total % | Per Baris");
         
         headers.push(...extrasAfter);
         headers.push("Keterangan / Temuan", "Foto URL");
@@ -608,18 +718,15 @@ export async function GET(request: Request) {
       // Title row
       const titleCols = headers.length;
       sheet.mergeCells(1, 1, 1, titleCols);
-      const titleCell = sheet.getCell(1, 1);
-      titleCell.value = `Laporan Patroli — ${mod.title} — ${formatBulan(bulan)}`;
-      titleCell.font = { bold: true, size: 12, color: { argb: "FFB71C1C" } };
-      titleCell.alignment = { horizontal: "center" };
-      sheet.getRow(1).height = 24;
+      applyTitleRow(sheet.getRow(1), `Laporan Patroli — ${mod.title} — ${formatBulan(bulan)}`, moduleTheme.accent);
 
       // Header row
       const headerRow = sheet.getRow(tableStartRow - 1);
       headers.forEach((h, i) => {
         headerRow.getCell(i + 1).value = h;
       });
-      applyHeaderRow(headerRow);
+      applyHeaderRow(headerRow, moduleTheme.header);
+      sheet.views = [{ state: "frozen", xSplit: 5, ySplit: 3 }];
 
       // Default column widths
       sheet.getColumn(1).width = 5;
@@ -634,10 +741,28 @@ export async function GET(request: Request) {
         sheet.getColumn(colIdx++).width = 25; // Sasaran
         sheet.getColumn(colIdx++).width = 35; // Keterangan
         sheet.getColumn(colIdx++).width = 20; // Foto
+      } else if (hasMergedAparSection) {
+        for (let i = 0; i < 6; i++) sheet.getColumn(colIdx++).width = 16;
+        sheet.getColumn(colIdx++).width = 18; // Total APAR
+        for (const _ of mod.questions) sheet.getColumn(colIdx++).width = 18;
+        for (let i = 0; i < 3; i++) sheet.getColumn(colIdx++).width = 16;
+        sheet.getColumn(colIdx++).width = 16; // tanggal pemeliharaan
+        sheet.getColumn(colIdx++).width = 35; // Keterangan
+        sheet.getColumn(colIdx++).width = 20; // Foto
       } else {
-        for (const _ of extrasBefore) sheet.getColumn(colIdx++).width = 14;
-        for (const _ of mod.questions) sheet.getColumn(colIdx++).width = 16;
-        for (const _ of extrasAfter) sheet.getColumn(colIdx++).width = 14;
+        for (const _ of extrasBefore) {
+          if (isAPAR || isLuarGedung) {
+            sheet.getColumn(colIdx++).width = 16;
+            sheet.getColumn(colIdx++).width = 16;
+          } else {
+            sheet.getColumn(colIdx++).width = 14;
+          }
+        }
+        if (isAPAR || isLuarGedung) sheet.getColumn(colIdx++).width = 18;
+        if (isAPD) sheet.getColumn(colIdx++).width = 18;
+        for (const _ of mod.questions) sheet.getColumn(colIdx++).width = 18;
+        if (isAPD) sheet.getColumn(colIdx++).width = 18;
+        for (const _ of extrasAfter) sheet.getColumn(colIdx++).width = 16;
         sheet.getColumn(colIdx++).width = 35; // Keterangan
         sheet.getColumn(colIdx++).width = 20; // Foto
       }
@@ -645,21 +770,86 @@ export async function GET(request: Request) {
       // Data rows
       let rowNum = tableStartRow;
       let dataIdx = 0;
+      const separatorInserted = { value: false };
 
       const masterProfesiNames = masterData.filter((m: any) => m.Ruangan?.startsWith('**')).map((m: any) => m.Ruangan?.substring(2).trim().toLowerCase());
 
-      for (const sub of aggregate.submissions) {
+      const mergedRows = (aggregate.mergedSubmissions ?? []) as any[];
+      const displayRows = mod.slug === "apar" && mergedRows.length > 0
+        ? [...aggregate.submissions, ...mergedRows]
+        : aggregate.submissions;
+
+      const getAparTotalForSubmission = (sub: any, masterRow?: any) => {
+        const row = masterRow ?? masterData.find((m: any) => m.Ruangan?.trim().toLowerCase() === (sub.location || "").trim().toLowerCase()) ?? null;
+        const isMergedLuarApar = Boolean((sub as any).isLuarGedung);
+
+        const readMaster = (keys: string[]) => {
+          const key = keys.find((k) => row && row[k] !== undefined && row[k] !== null && String(row[k]).trim() !== "");
+          return key ? (parseInt(String(row[key]), 10) || 0) : 0;
+        };
+
+        const getE = (labels: string | string[]) => {
+          const choices = Array.isArray(labels) ? labels : [labels];
+          const match = sub.extras?.find((x: any) => choices.some((label) => x.label === label || x.label.includes(label)));
+          return parseInt(String(match?.value ?? "0"), 10) || 0;
+        };
+
+        if (row) {
+          if (isMergedLuarApar) {
+            return readMaster(["Jumlah APAR Powder 6 kg", "Jumlah APAR Powder"]) + readMaster(["Jumlah APAR Powder 25 kg"]) + readMaster(["Jumlah APAR CO2"]);
+          }
+          return (parseInt(String(row["Jumlah APAR Powder"] ?? "0"), 10) || 0) + (parseInt(String(row["Jumlah APAR CO2"] ?? "0"), 10) || 0);
+        }
+
+        if (isMergedLuarApar) {
+          return getE(["Jumlah APAR Powder 6 kg", "Jumlah APAR Powder"]) + getE(["Jumlah APAR Powder 25 kg"]) + getE(["Jumlah APAR CO2"]);
+        }
+
+        return getE(["Jumlah APAR Powder"]) + getE(["Jumlah APAR CO2"]);
+      };
+
+      for (const sub of displayRows) {
+        const isMergedRow = Boolean((sub as any).isLuarGedung);
+        const isB3SecondarySection = Boolean(isB3 && sub.secondaryDescription && sub.secondaryDescription.trim() !== "");
+        const shouldInsertSectionSeparator =
+          (mod.slug === "apar" && isMergedRow) ||
+          (isB3SecondarySection && !separatorInserted.value);
+
+        if (shouldInsertSectionSeparator && !separatorInserted.value) {
+          const spacerRow = sheet.getRow(rowNum++);
+          spacerRow.height = 6;
+          spacerRow.eachCell((cell) => {
+            cell.value = "";
+            cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFFFFF" } };
+            cell.border = { bottom: { style: "thin", color: { argb: "00FFFFFF" } } };
+          });
+
+          const separatorRow = sheet.getRow(rowNum++);
+          sheet.mergeCells(rowNum - 1, 1, rowNum - 1, headers.length);
+          applySectionBannerRow(
+            separatorRow,
+            mod.slug === "apar" && isMergedRow
+              ? `🌳 APAR LUAR GEDUNG — ${mergedRows.length} LOKASI`
+              : "🧪 B3 — Eyewasher & Bodywasher",
+            mod.slug === "apar" && isMergedRow
+              ? { type: "pattern", pattern: "solid", fgColor: { argb: "FFF7E7B5" } }
+              : { type: "pattern", pattern: "solid", fgColor: { argb: "FFE7F7E9" } },
+            mod.slug === "apar" && isMergedRow ? "FF7C4A00" : "FF14532D"
+          );
+          separatorInserted.value = true;
+        }
+
         const finalDesc = buildKeteranganForExport(sub, isAPD, isB3, masterProfesiNames);
 
         dataIdx++;
         
         const getExt = (lbl: string) => {
-          const e = sub.extras?.find(x => x.label === lbl || x.label.includes(lbl));
+          const e = sub.extras?.find((x: any) => x.label === lbl || x.label.includes(lbl));
           return e ? formatMaybeDate(e.value) : "-";
         };
 
         const getAns = (sh: string) => {
-          const a = sub.answers?.find(x => x.question.sheetHeader === sh);
+          const a = sub.answers?.find((x: any) => x.question.sheetHeader === sh);
           const ans = a ? a.jawaban : "-";
           
           if (ans === "N/A" || ans === "" || ans === "-") {
@@ -672,25 +862,7 @@ export async function GET(request: Request) {
           }
 
           if (isAPAR || isLuarGedung) {
-            const mRow = masterData.find((m: any) => m.Ruangan?.trim().toLowerCase() === (sub.location || "").trim().toLowerCase());
-            let totalApar = 0;
-            if (mRow) {
-              if (isAPAR) {
-                totalApar = (parseInt(mRow["Jumlah APAR Powder"]) || 0) + (parseInt(mRow["Jumlah APAR CO2"]) || 0);
-              } else {
-                totalApar = (parseInt(mRow["Jumlah APAR Powder 6 kg"]) || 0) + (parseInt(mRow["Jumlah APAR Powder 25 kg"]) || 0) + (parseInt(mRow["Jumlah APAR CO2"]) || 0);
-              }
-            } else {
-              const getE = (l: string) => {
-                const e = sub.extras?.find((x: any) => x.label === l || x.label.includes(l));
-                return parseInt(e?.value || "0", 10) || 0;
-              };
-              if (isAPAR) {
-                totalApar = getE("Jumlah APAR Powder") + getE("Jumlah APAR CO2");
-              } else if (isLuarGedung) {
-                totalApar = getE("Jumlah APAR Powder 6 kg") + getE("Jumlah APAR Powder 25 kg") + getE("Jumlah APAR CO2");
-              }
-            }
+            const totalApar = getAparTotalForSubmission(sub);
             if (ans === "Ya") {
               return totalApar;
             } else if (ans === "Tidak") {
@@ -779,6 +951,39 @@ export async function GET(request: Request) {
         if (isSosialisasi) {
           vals.push(getExt("Topik"), getExt("Sasaran"), finalDesc);
           if (sub.photoUrl) vals.push(sub.photoUrl);
+        } else if (mod.slug === "apar" && isMergedRow) {
+          const mRow = masterData.find((m: any) => m.Ruangan?.trim().toLowerCase() === (sub.location || "").trim().toLowerCase());
+          const getNumber = (labels: string | string[], fallback = 0) => {
+            const candidates = Array.isArray(labels) ? labels : [labels];
+            const match = sub.extras?.find((x: any) => candidates.some((label) => x.label === label || x.label.includes(label)));
+            const value = match?.value ?? String(fallback);
+            return parseInt(value, 10) || 0;
+          };
+
+          const getMasterNumber = (keys: string[], fallback = 0) => {
+            const key = keys.find((k) => mRow && mRow[k] !== undefined && mRow[k] !== null && String(mRow[k]).trim() !== "");
+            if (!key) return fallback;
+            return parseInt(String(mRow[key]), 10) || 0;
+          };
+
+          const seharusnya6 = getMasterNumber(["Jumlah APAR Powder 6 kg", "Jumlah APAR Powder"], getNumber(["Jumlah APAR Powder 6 kg", "Jumlah APAR Powder"]));
+          const terlihat6 = getNumber(["Jumlah APAR Powder 6 kg", "Jumlah APAR Powder"]);
+          const seharusnya25 = getMasterNumber(["Jumlah APAR Powder 25 kg"], getNumber("Jumlah APAR Powder 25 kg"));
+          const terlihat25 = getNumber("Jumlah APAR Powder 25 kg");
+          const seharusnyaCo2 = getMasterNumber(["Jumlah APAR CO2"], getNumber("Jumlah APAR CO2"));
+          const terlihatCo2 = getNumber("Jumlah APAR CO2");
+          const totalLuar = seharusnya6 + seharusnya25 + seharusnyaCo2;
+
+          vals.push(seharusnya6, seharusnya25, terlihat6, terlihat25, seharusnyaCo2, terlihatCo2, totalLuar);
+          for (const q of mod.questions) vals.push(getAns(q.sheetHeader));
+
+          let compliantTotal = 0;
+          for (const q of mod.questions) {
+            const ansValue = getAns(q.sheetHeader);
+            if (typeof ansValue === "number") compliantTotal += ansValue;
+          }
+          vals.push(compliantTotal, Math.max(0, totalLuar - compliantTotal), `${totalLuar > 0 ? Number(((compliantTotal / totalLuar) * 100).toFixed(2)) : 0}%`);
+          vals.push(getExt("Tgl. Pemeliharaan Terakhir"), finalDesc);
         } else {
           for (const l of extrasBefore) {
             if (isAPAR || isLuarGedung) {
@@ -792,15 +997,7 @@ export async function GET(request: Request) {
           }
           
           if (isAPAR || isLuarGedung) {
-            const mRow = masterData.find((m: any) => m.Ruangan?.trim().toLowerCase() === (sub.location || "").trim().toLowerCase());
-            let totalAparSeharusnya: number | string = "-";
-            if (mRow) {
-              if (isAPAR) {
-                totalAparSeharusnya = (parseInt(mRow["Jumlah APAR Powder"]) || 0) + (parseInt(mRow["Jumlah APAR CO2"]) || 0);
-              } else {
-                totalAparSeharusnya = (parseInt(mRow["Jumlah APAR Powder 6 kg"]) || 0) + (parseInt(mRow["Jumlah APAR Powder 25 kg"]) || 0) + (parseInt(mRow["Jumlah APAR CO2"]) || 0);
-              }
-            }
+            const totalAparSeharusnya = getAparTotalForSubmission(sub);
             vals.push(totalAparSeharusnya);
           }
           if (isAPD) {
@@ -842,6 +1039,20 @@ export async function GET(request: Request) {
         vals.forEach((v, i) => {
           dataRow.getCell(i + 1).value = v;
         });
+        applyDataRow(dataRow, dataIdx, moduleTheme.soft);
+        if (isMergedRow) {
+          dataRow.eachCell((cell) => {
+            cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFF3E0" } };
+            cell.border = {
+              top: { style: "thin", color: { argb: "FFE7C78B" } },
+              left: { style: "thin", color: { argb: "FFE7C78B" } },
+              right: { style: "thin", color: { argb: "FFE7C78B" } },
+              bottom: { style: "thin", color: { argb: "FFE7C78B" } },
+            };
+          });
+          dataRow.getCell(4).font = { bold: true, color: { argb: "FF9A5B00" } };
+          dataRow.getCell(5).font = { bold: true, color: { argb: "FF9A5B00" } };
+        }
         // Photo URL as clickable hyperlink in last column
         if (!isSosialisasi && sub.photoUrl) {
           const photoCell = dataRow.getCell(vals.length + 1);
@@ -855,8 +1066,7 @@ export async function GET(request: Request) {
           photoCell.font = { color: { argb: "FF1565C0" }, underline: true, size: 9 };
           photoCell.alignment = { vertical: "middle", wrapText: false };
         }
-        applyDataRow(dataRow, dataIdx);
-        // Re-apply photo cell font after applyDataRow (it resets it)
+        // Re-apply photo cell font after row styling (it resets it)
         if (sub.photoUrl) {
           const photoCell = dataRow.getCell(isSosialisasi ? vals.length : vals.length + 1);
           photoCell.font = { color: { argb: "FF1565C0" }, underline: true, size: 9 };
@@ -871,11 +1081,44 @@ export async function GET(request: Request) {
         rowNum++;
         const summaryRow = sheet.getRow(rowNum);
         summaryRow.getCell(1).value = `TOTAL KEPATUHAN: ${aggregate.totalPct ?? 0}%`;
-        summaryRow.getCell(1).font = { bold: true, color: { argb: "FFB71C1C" } };
+        summaryRow.getCell(1).font = { bold: true, color: { argb: moduleTheme.accent } };
         summaryRow.getCell(1).alignment = { horizontal: "right", vertical: "middle" };
+        summaryRow.getCell(1).fill = moduleTheme.soft;
+        summaryRow.getCell(1).border = {
+          left: { style: "thin", color: { argb: moduleTheme.accent } },
+          right: { style: "thin", color: { argb: moduleTheme.accent } },
+          top: { style: "thin", color: { argb: moduleTheme.accent } },
+          bottom: { style: "thin", color: { argb: moduleTheme.accent } },
+        };
         sheet.mergeCells(rowNum, 1, rowNum, startMergeIdx);
 
         let qColIdx = startMergeIdx + 1;
+        summaryRow.eachCell((cell, col) => {
+          if (col <= startMergeIdx) return;
+          cell.border = {
+            left: { style: "thin", color: { argb: moduleTheme.accent } },
+            right: { style: "thin", color: { argb: moduleTheme.accent } },
+            top: { style: "thin", color: { argb: moduleTheme.accent } },
+            bottom: { style: "thin", color: { argb: moduleTheme.accent } },
+          };
+        });
+
+        if (mod.slug === "apar" && (aggregate.mergedSubmissions ?? []).length > 0) {
+          const displayRows = [...aggregate.submissions, ...(aggregate.mergedSubmissions ?? [])];
+          const sumTotalSeharusnya = displayRows.reduce((acc, sub) => acc + getAparTotalForSubmission(sub), 0);
+          const totalCell = summaryRow.getCell(qColIdx);
+          totalCell.value = sumTotalSeharusnya;
+          totalCell.font = { bold: true, color: { argb: moduleTheme.accent } };
+          totalCell.alignment = { horizontal: "center", vertical: "middle" };
+          totalCell.fill = moduleTheme.soft;
+          totalCell.border = {
+            left: { style: "thin", color: { argb: moduleTheme.accent } },
+            right: { style: "thin", color: { argb: moduleTheme.accent } },
+            top: { style: "thin", color: { argb: moduleTheme.accent } },
+            bottom: { style: "thin", color: { argb: moduleTheme.accent } },
+          };
+          qColIdx += 1;
+        }
         
         for (const l of extrasBefore) {
           if (isAPAR || isLuarGedung) {
@@ -890,15 +1133,27 @@ export async function GET(request: Request) {
               sumTerlihat += parseInt(ext?.value || "0", 10) || 0;
             }
             summaryRow.getCell(qColIdx).value = sumSeharusnya;
-            summaryRow.getCell(qColIdx).font = { bold: true };
+            summaryRow.getCell(qColIdx).font = { bold: true, color: { argb: moduleTheme.accent } };
             summaryRow.getCell(qColIdx).alignment = { horizontal: "center", vertical: "middle" };
-            summaryRow.getCell(qColIdx).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFF3E0" } };
+            summaryRow.getCell(qColIdx).fill = moduleTheme.soft;
+            summaryRow.getCell(qColIdx).border = {
+              left: { style: "thin", color: { argb: moduleTheme.accent } },
+              right: { style: "thin", color: { argb: moduleTheme.accent } },
+              top: { style: "thin", color: { argb: moduleTheme.accent } },
+              bottom: { style: "thin", color: { argb: moduleTheme.accent } },
+            };
             qColIdx++;
 
             summaryRow.getCell(qColIdx).value = sumTerlihat;
-            summaryRow.getCell(qColIdx).font = { bold: true };
+            summaryRow.getCell(qColIdx).font = { bold: true, color: { argb: moduleTheme.accent } };
             summaryRow.getCell(qColIdx).alignment = { horizontal: "center", vertical: "middle" };
-            summaryRow.getCell(qColIdx).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFF3E0" } };
+            summaryRow.getCell(qColIdx).fill = moduleTheme.soft;
+            summaryRow.getCell(qColIdx).border = {
+              left: { style: "thin", color: { argb: moduleTheme.accent } },
+              right: { style: "thin", color: { argb: moduleTheme.accent } },
+              top: { style: "thin", color: { argb: moduleTheme.accent } },
+              bottom: { style: "thin", color: { argb: moduleTheme.accent } },
+            };
             qColIdx++;
           } else {
             const ef = mod.extraFields?.find(e => e.label === l);
@@ -920,46 +1175,27 @@ export async function GET(request: Request) {
         }
         
         if (isAPAR || isLuarGedung) {
-           let sumTotalSeharusnya = 0;
-           for (const sub of aggregate.submissions) {
-              const mRow = masterData.find((m: any) => m.Ruangan?.trim().toLowerCase() === (sub.location || "").trim().toLowerCase());
-              if (mRow) {
-                if (isAPAR) {
-                  sumTotalSeharusnya += (parseInt(mRow["Jumlah APAR Powder"]) || 0) + (parseInt(mRow["Jumlah APAR CO2"]) || 0);
-                } else {
-                  sumTotalSeharusnya += (parseInt(mRow["Jumlah APAR Powder 6 kg"]) || 0) + (parseInt(mRow["Jumlah APAR Powder 25 kg"]) || 0) + (parseInt(mRow["Jumlah APAR CO2"]) || 0);
-                }
-              } else {
-                const getE = (l: string) => {
-                  const e = sub.extras?.find((x: any) => x.label === l || x.label.includes(l));
-                  return parseInt(e?.value || "0", 10) || 0;
-                };
-                if (isAPAR) {
-                  sumTotalSeharusnya += getE("Jumlah APAR Powder") + getE("Jumlah APAR CO2");
-                } else if (isLuarGedung) {
-                  sumTotalSeharusnya += getE("Jumlah APAR Powder 6 kg") + getE("Jumlah APAR Powder 25 kg") + getE("Jumlah APAR CO2");
-                }
-              }
-           }
+           if (!(mod.slug === "apar" && (aggregate.mergedSubmissions ?? []).length > 0)) {
+             let sumTotalSeharusnya = 0;
+             for (const sub of aggregate.submissions) {
+               sumTotalSeharusnya += getAparTotalForSubmission(sub);
+             }
+             for (const sub of aggregate.mergedSubmissions ?? []) {
+               sumTotalSeharusnya += getAparTotalForSubmission(sub);
+             }
 
-           for (const sub of aggregate.mergedSubmissions ?? []) {
-              const mRow = masterData.find((m: any) => m.Ruangan?.trim().toLowerCase() === (sub.location || "").trim().toLowerCase());
-              if (mRow) {
-                sumTotalSeharusnya += (parseInt(mRow["Jumlah APAR Powder 6 kg"]) || 0) + (parseInt(mRow["Jumlah APAR Powder 25 kg"]) || 0) + (parseInt(mRow["Jumlah APAR CO2"]) || 0);
-              } else {
-                const getE = (l: string) => {
-                  const e = sub.extras?.find((x: any) => x.label === l || x.label.includes(l));
-                  return parseInt(e?.value || "0", 10) || 0;
-                };
-                sumTotalSeharusnya += getE("Jumlah APAR Powder") + getE("Jumlah APAR Powder 25 kg") + getE("Jumlah APAR CO2");
-              }
+             summaryRow.getCell(qColIdx).value = sumTotalSeharusnya;
+             summaryRow.getCell(qColIdx).font = { bold: true, color: { argb: moduleTheme.accent } };
+             summaryRow.getCell(qColIdx).alignment = { horizontal: "center", vertical: "middle" };
+             summaryRow.getCell(qColIdx).fill = moduleTheme.soft;
+             summaryRow.getCell(qColIdx).border = {
+               left: { style: "thin", color: { argb: moduleTheme.accent } },
+               right: { style: "thin", color: { argb: moduleTheme.accent } },
+               top: { style: "thin", color: { argb: moduleTheme.accent } },
+               bottom: { style: "thin", color: { argb: moduleTheme.accent } },
+             };
+             qColIdx++;
            }
-
-           summaryRow.getCell(qColIdx).value = sumTotalSeharusnya;
-           summaryRow.getCell(qColIdx).font = { bold: true };
-           summaryRow.getCell(qColIdx).alignment = { horizontal: "center", vertical: "middle" };
-           summaryRow.getCell(qColIdx).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFF3E0" } };
-           qColIdx++;
         }
         
         if (isAPD) {
@@ -1194,6 +1430,9 @@ export async function GET(request: Request) {
           "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         "Content-Disposition": `attachment; filename="${filename}"`,
         "Content-Length": buffer.byteLength.toString(),
+        "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+        "Pragma": "no-cache",
+        "Expires": "0",
       },
     });
   } catch (error) {

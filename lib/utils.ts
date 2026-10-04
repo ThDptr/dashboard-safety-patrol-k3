@@ -161,41 +161,67 @@ export function calcPct(numerator: number, denominator: number): number | null {
  * Downloads a Blob and prompts the user with a "Save As" dialog if supported by the browser.
  * Falls back to standard anchor download if the File System Access API is not available.
  */
+let savePromptInFlight = false;
+
+export function isLikelyXlsxBlob(blob: Blob | null | undefined): boolean {
+  if (!blob || blob.size < 4) return false;
+
+  const type = (blob.type || "").toLowerCase();
+  return type.includes("spreadsheetml") || type.includes("excel") || type.includes("officedocument");
+}
+
+export async function validateXlsxResponse(response: Response): Promise<Blob> {
+  if (!response.ok) {
+    const errorText = await response.text();
+    const safeText = errorText.replace(/\s+/g, " ").trim();
+    throw new Error(safeText || "Export Excel gagal");
+  }
+
+  const arrayBuffer = await response.arrayBuffer();
+  const blob = new Blob([arrayBuffer], {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
+
+  const sig = new Uint8Array(arrayBuffer.slice(0, 4));
+  const isZipSignature = sig.length >= 4 && sig[0] === 0x50 && sig[1] === 0x4b && sig[2] === 0x03 && sig[3] === 0x04;
+  const headerType = (response.headers.get("content-type") || blob.type || "").toLowerCase();
+  const isXlsxLike = headerType.includes("spreadsheetml") || headerType.includes("excel") || isZipSignature;
+
+  if (!isXlsxLike) {
+    const fallbackText = new TextDecoder().decode(arrayBuffer.slice(0, 2048));
+    const normalized = fallbackText.replace(/\s+/g, " ").trim();
+    throw new Error(normalized || "Respons export bukan file Excel yang valid");
+  }
+
+  return blob;
+}
+
 export async function downloadWithSavePrompt(
   blob: Blob,
   defaultFilename: string,
   acceptMimeType: string = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   acceptExtensions: string[] = [".xlsx"]
 ) {
-  if (typeof window !== "undefined" && 'showSaveFilePicker' in window) {
-    try {
-      const handle = await (window as any).showSaveFilePicker({
-        suggestedName: defaultFilename,
-        types: [{
-          description: 'Excel File',
-          accept: { [acceptMimeType]: acceptExtensions },
-        }],
-      });
-      const writable = await handle.createWritable();
-      await writable.write(blob);
-      await writable.close();
-      return;
-    } catch (err: any) {
-      if (err.name !== 'AbortError') {
-        console.error('Save picker error:', err);
-      } else {
-        return; // User cancelled
-      }
+  if (savePromptInFlight) return;
+  savePromptInFlight = true;
+
+  try {
+    if (!blob || blob.size <= 0) {
+      throw new Error("File yang akan diunduh kosong atau tidak valid.");
     }
+
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = defaultFilename;
+    a.rel = "noopener";
+    a.style.display = "none";
+    a.setAttribute("data-export-xlsx", "true");
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+  } finally {
+    savePromptInFlight = false;
   }
-  
-  // Fallback for browsers that do not support showSaveFilePicker (e.g. Firefox, Safari)
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = defaultFilename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
 }

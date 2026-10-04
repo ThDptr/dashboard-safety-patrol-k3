@@ -6,7 +6,7 @@ import { useParams, useRouter, useSearchParams, usePathname } from "next/navigat
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { MODULE_BY_SLUG, HARIAN_SLUGS, HARIAN_ABBREV, type HarianSlug } from "@/lib/modules";
-import { formatBulan, formatTimestamp, getCurrentBulan, formatTanggal, downloadWithSavePrompt } from "@/lib/utils";
+import { formatBulan, formatTimestamp, getCurrentBulan, formatTanggal, downloadWithSavePrompt, validateXlsxResponse } from "@/lib/utils";
 import SubmissionTable from "@/components/SubmissionTable";
 import LoadingScreen from "@/components/LoadingScreen";
 import jsPDF from "jspdf";
@@ -1130,13 +1130,19 @@ function PatroliDetailContent() {
 
 
   const handleExportExcel = async () => {
-    if (!data) return;
+    if (!data || downloading) return;
     setDownloading(true);
     try {
       let url = `/api/export/excel?slug=${slug}&bulan=${bulan}&ruangan=${encodeURIComponent(ruangan)}`;
-      const res = await fetch(url);
-      if (!res.ok) throw new Error("Gagal mengunduh Excel");
-      const blob = await res.blob();
+      // Modul APAR: ikuti rentang tanggal yang sedang tampil di dashboard
+      if (slug === "apar" && startDate && endDate) {
+        url += `&startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}`;
+      }
+      const res = await fetch(url, {
+        cache: "no-store",
+        headers: { Accept: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
+      });
+      const blob = await validateXlsxResponse(res);
       let filename = `K3_RSOMH_${slug.toUpperCase()}_${bulan}.xlsx`;
       if (slug === "pcra" && data.submissions && data.submissions.length > 0) {
         const topicName = data.submissions[0].extras?.find(e => e.label === "Topik")?.value || "";
@@ -1154,6 +1160,7 @@ function PatroliDetailContent() {
   };
 
   const handleExportDetailExcel = async (type: 'apd' | 'b3' | 'elektrik' | 'harian') => {
+    if (downloading) return;
     setDownloading(true);
     try {
       const ExcelJS = (await import('exceljs')).default;

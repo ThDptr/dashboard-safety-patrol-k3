@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, Suspense, useRef } from "react";
 import LockMonthButton from "@/components/LockMonthButton";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { getCurrentBulan, formatBulan, formatTimestamp, downloadWithSavePrompt, fmtPctVal } from "@/lib/utils";
+import { getCurrentBulan, formatBulan, formatTimestamp, downloadWithSavePrompt, fmtPctVal, validateXlsxResponse } from "@/lib/utils";
 import { pctStatus } from "@/lib/analytics";
 import LoadingScreen from "@/components/LoadingScreen";
 
@@ -278,9 +278,11 @@ function DashboardContent() {
   const handleExportAll = async () => {
     setDownloading(true);
     try {
-      const res = await fetch(`/api/export/excel?bulan=${bulan}`);
-      if (!res.ok) throw new Error("Export gagal");
-      const blob = await res.blob();
+      const res = await fetch(`/api/export/excel?bulan=${bulan}`, {
+        cache: "no-store",
+        headers: { Accept: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
+      });
+      const blob = await validateXlsxResponse(res);
       await downloadWithSavePrompt(blob, `K3_RSOMH_LaporanLengkap_${bulan}.xlsx`);
     } catch {
       alert("Gagal mengunduh laporan.");

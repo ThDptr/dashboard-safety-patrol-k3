@@ -46,6 +46,8 @@ export interface SubmissionResult {
   row: PatroliRow;
   /** Display location (ruangan / lokasi PCRA / lokasi luar) */
   location: string;
+  /** True when this submission comes from the merged Luar Gedung branch */
+  isLuarGedung?: boolean;
   /** Per-question answers for this submission */
   answers: Array<{
     question: QuestionDef;
@@ -698,6 +700,7 @@ export function computeModuleAggregate(
     return {
       row,
       location: getDisplayLocation(row),
+      isLuarGedung: true,
       answers,
       description,
       photoUrl,
