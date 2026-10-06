@@ -2182,7 +2182,7 @@ function PatroliDetailContent() {
             {loading ? "⏳" : "🔄"} Refresh
           </button>
 
-          {!moduleDef.logOnly && (
+          {(!moduleDef.logOnly || slug === "sosialisasi") && (
             <button
               onClick={handleExportExcel}
               disabled={downloading || loading || !data?.submissions.length}

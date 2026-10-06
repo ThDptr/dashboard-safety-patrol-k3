@@ -591,8 +591,19 @@ export async function GET(request: Request) {
           
           if (photos.length === 1) {
              const fotoCell = exRow.getCell(totalCols);
-             fotoCell.value = { text: `📷 Lihat Foto (${photos[0].label})`, hyperlink: photos[0].url };
-             fotoCell.font = { color: { argb: "FF0563C1" }, underline: true };
+             let isHarianUrlValid = false;
+             try {
+               const parsed = new URL(photos[0].url.trim());
+               if (parsed.protocol === "http:" || parsed.protocol === "https:") isHarianUrlValid = true;
+             } catch (e) {}
+             
+             if (isHarianUrlValid) {
+               fotoCell.value = { text: `📷 Lihat Foto (${photos[0].label})`, hyperlink: photos[0].url };
+               fotoCell.font = { color: { argb: "FF0563C1" }, underline: true };
+             } else {
+               fotoCell.value = `📷 Foto (${photos[0].label}):\n${photos[0].url}`;
+               fotoCell.alignment = { ...fotoCell.alignment, wrapText: true };
+             }
           } else if (photos.length > 1) {
              const fotoCell = exRow.getCell(totalCols);
              fotoCell.alignment = { ...fotoCell.alignment, wrapText: true };
@@ -950,7 +961,6 @@ export async function GET(request: Request) {
 
         if (isSosialisasi) {
           vals.push(getExt("Topik"), getExt("Sasaran"), finalDesc);
-          if (sub.photoUrl) vals.push(sub.photoUrl);
         } else if (mod.slug === "apar" && isMergedRow) {
           const mRow = masterData.find((m: any) => m.Ruangan?.trim().toLowerCase() === (sub.location || "").trim().toLowerCase());
           const getNumber = (labels: string | string[], fallback = 0) => {
@@ -1053,23 +1063,32 @@ export async function GET(request: Request) {
           dataRow.getCell(4).font = { bold: true, color: { argb: "FF9A5B00" } };
           dataRow.getCell(5).font = { bold: true, color: { argb: "FF9A5B00" } };
         }
-        // Photo URL as clickable hyperlink in last column
-        if (!isSosialisasi && sub.photoUrl) {
-          const photoCell = dataRow.getCell(vals.length + 1);
-          photoCell.value = { text: "📷 Lihat Foto", hyperlink: sub.photoUrl };
-          photoCell.font = { color: { argb: "FF1565C0" }, underline: true, size: 9 };
-          photoCell.alignment = { vertical: "middle", wrapText: false };
-        } else if (isSosialisasi && sub.photoUrl) {
-          // already pushed to vals in sosialisasi branch — make it a hyperlink
-          const photoCell = dataRow.getCell(vals.length);
-          photoCell.value = { text: "📷 Lihat Foto", hyperlink: sub.photoUrl };
-          photoCell.font = { color: { argb: "FF1565C0" }, underline: true, size: 9 };
-          photoCell.alignment = { vertical: "middle", wrapText: false };
+        // Photo URL as clickable hyperlink or plain text in last column
+        let isUrlValid = false;
+        if (sub.photoUrl && typeof sub.photoUrl === "string") {
+          try {
+            const parsed = new URL(sub.photoUrl.trim());
+            if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+              isUrlValid = true;
+            }
+          } catch (e) {
+            isUrlValid = false;
+          }
         }
-        // Re-apply photo cell font after row styling (it resets it)
-        if (sub.photoUrl) {
-          const photoCell = dataRow.getCell(isSosialisasi ? vals.length : vals.length + 1);
+        
+        const photoColIdx = vals.length + 1;
+        const photoCell = dataRow.getCell(photoColIdx);
+
+        if (isUrlValid) {
+          photoCell.value = { text: "📷 Lihat Foto", hyperlink: sub.photoUrl };
           photoCell.font = { color: { argb: "FF1565C0" }, underline: true, size: 9 };
+          photoCell.alignment = { vertical: "middle", wrapText: false };
+        } else if (sub.photoUrl) {
+          photoCell.value = sub.photoUrl;
+          photoCell.alignment = { vertical: "middle", wrapText: true };
+        } else {
+          photoCell.value = "-";
+          photoCell.alignment = { horizontal: "center", vertical: "middle" };
         }
       }
 

@@ -1117,6 +1117,48 @@ export default function SubmissionTable({
                       }
                     });
                   });
+
+                  // Baris APAR Luar Gedung (digabung ke modul APAR) ikut dihitung agar
+                  // konsisten dengan total per pertanyaan (Dalam + Luar).
+                  if (isAPAR) {
+                    (mergedSubmissions ?? []).forEach((sub: any) => {
+                      const mRow = getMasterRow(sub.location);
+                      let totalLuar = 0;
+                      if (mRow) {
+                        totalLuar = (parseInt(mRow["Jumlah APAR Powder 6 kg"], 10) || 0)
+                          + (parseInt(mRow["Jumlah APAR Powder 25 kg"], 10) || 0)
+                          + (parseInt(mRow["Jumlah APAR CO2"], 10) || 0);
+                      }
+                      if (totalLuar === 0) {
+                        const p6  = parseInt(sub.extras?.find((e: any) => e.label === "Jumlah APAR Powder")?.value || "0", 10) || 0;
+                        const p25 = parseInt(sub.extras?.find((e: any) => e.label === "Jumlah APAR Powder 25 kg")?.value || "0", 10) || 0;
+                        const co2 = parseInt(sub.extras?.find((e: any) => e.label === "Jumlah APAR CO2")?.value || "0", 10) || 0;
+                        totalLuar = p6 + p25 + co2;
+                      }
+
+                      moduleDef.questions?.forEach((q: any) => {
+                        const ans = sub.answers?.find((a: any) => a.label === q.label)?.jawaban ?? "";
+                        if (ans === "N/A" || ans === "") return;
+                        allExpected += totalLuar;
+                        if (ans === "Ya") allCompliant += totalLuar;
+                        else if (ans === "Tidak") {
+                          let nonCompliant = totalLuar;
+                          const desc = sub.description || "";
+                          if (q.label.includes("Terjangkau")) {
+                            const match = desc.match(/TJ\s*[:=]\s*(\d+)/i);
+                            if (match) nonCompliant = parseInt(match[1]);
+                          } else if (q.label.includes("Rambu")) {
+                            const match = desc.match(/RS\s*[:=]\s*(\d+)/i);
+                            if (match) nonCompliant = parseInt(match[1]);
+                          } else if (q.label.includes("Kartu")) {
+                            const match = desc.match(/KP\s*[:=]\s*(\d+)/i);
+                            if (match) nonCompliant = parseInt(match[1]);
+                          }
+                          allCompliant += Math.max(0, totalLuar - nonCompliant);
+                        }
+                      });
+                    });
+                  }
                   
                   const allPct = allExpected > 0 ? Number(((allCompliant / allExpected) * 100).toFixed(2)) : null;
                   

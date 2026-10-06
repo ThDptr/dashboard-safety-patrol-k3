@@ -256,6 +256,9 @@ export async function GET(request: Request) {
       const { getField, getDisplayLocation } = await import("@/lib/google-sheets");
 
       MODULES.forEach((matchedModule) => {
+        // Sosialisasi/Safety Talking adalah log kegiatan, bukan temuan → dikecualikan dari rekap temuan
+        if (matchedModule.slug === "sosialisasi") return;
+
         // 1. Get all rows matching this module
         const relevantRows = rows.filter((row) => rowMatchesModule(row, matchedModule));
         if (relevantRows.length === 0) return;

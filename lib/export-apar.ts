@@ -385,12 +385,22 @@ export async function addAparSheet(
   };
 
   const writePhoto = (url: string, extra: CellStyle = {}): void => {
-    if (url) {
+    let isValid = false;
+    if (url && typeof url === "string") {
+      try {
+        const parsed = new URL(url.trim());
+        if (parsed.protocol === "http:" || parsed.protocol === "https:") isValid = true;
+      } catch (e) {}
+    }
+    
+    if (isValid) {
       put(ws, r, COL_FOTO, { text: "📷 Lihat Foto", hyperlink: url }, {
         ...extra,
         font: { size: 10, underline: true, color: { argb: COLOR.link } },
         align: { horizontal: "left", vertical: "middle" },
       });
+    } else if (url) {
+      put(ws, r, COL_FOTO, url, { ...extra, align: { horizontal: "left", vertical: "middle", wrapText: true } });
     } else {
       put(ws, r, COL_FOTO, "-", { ...extra, align: { horizontal: "center", vertical: "middle" }, font: { color: { argb: COLOR.gray500 } } });
     }
@@ -689,7 +699,7 @@ export async function addAparSheet(
     }, ftBase);
   });
 
-  // Rekap Patuh / Tdk Patuh / Total % (hanya baris Dalam Gedung — seperti dashboard)
+  // Rekap Patuh / Tdk Patuh / Total % (Dalam Gedung + Luar Gedung — konsisten dengan rekap per pertanyaan)
   let allCompliant = 0;
   let allExpected = 0;
   dalamRows.forEach((sub: any) => {
@@ -701,6 +711,18 @@ export async function addAparSheet(
       if (ans === "Ya") allCompliant += totalApar;
       else if (ans === "Tidak") {
         allCompliant += Math.max(0, totalApar - nonCompliantFromDesc(sub.description || "", q.label, totalApar));
+      }
+    });
+  });
+  luarRows.forEach((sub: any) => {
+    const totalLuar = totalAparLuarOf(sub);
+    questions.forEach((q) => {
+      const ans: string = sub.answers?.find((a: any) => a.question.label === q.label)?.jawaban ?? "";
+      if (ans === "N/A" || ans === "") return;
+      allExpected += totalLuar;
+      if (ans === "Ya") allCompliant += totalLuar;
+      else if (ans === "Tidak") {
+        allCompliant += Math.max(0, totalLuar - nonCompliantFromDesc(sub.description || "", q.label, totalLuar));
       }
     });
   });
